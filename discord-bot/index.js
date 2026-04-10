@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { startInteractionServer } = require('./interaction-server');
 const statusCmd   = require('./commands/status');
 const roomsCmd    = require('./commands/rooms');
 const closeRoomCmd = require('./commands/close-room');
@@ -61,7 +62,33 @@ client.once('clientReady', () => {
   console.log(`[Bot] CEO 기획실: #${CEO_CHANNEL} (메시지 전송 또는 ${TRIGGER_EMOJI} 반응 시 병렬 dispatch)`);
 });
 
-// ─── 슬래시 커맨드 + 컴포넌트 인터랙션 ──────────────────────
+/**
+ * Slash command 라우팅 — Gateway와 HTTP 양쪽에서 재사용
+ * @param {string} commandName
+ * @param {import('discord.js').ChatInputCommandInteraction|object} interaction
+ */
+async function routeCommand(commandName, interaction) {
+  const ctx = { GAME_SERVER_URL, ADMIN_API_KEY, EmbedBuilder };
+  switch (commandName) {
+    case 'status':     await statusCmd.execute(interaction, ctx);    break;
+    case 'rooms':      await roomsCmd.execute(interaction, ctx);     break;
+    case 'close-room': await closeRoomCmd.execute(interaction, ctx); break;
+    case 'deploy':     await deployCmd.execute(interaction, ctx);    break;
+    case 'claude':     await claudeExecute(interaction);             break;
+    case 'be':         await executeBackend(interaction);            break;
+    case 'fe':         await executeFrontend(interaction);           break;
+    case 'skill':      await executeSkill(interaction);              break;
+    case 'docs':       await docsCmd.execute(interaction);           break;
+    case 'wakeup':     await wakeupCmd.execute(interaction);         break;
+    case 'dispatch':   await handleDispatchCommand(interaction);     break;
+    default:
+      if (typeof interaction.reply === 'function') {
+        await interaction.reply({ content: '알 수 없는 명령입니다.', ephemeral: true });
+      }
+  }
+}
+
+// ─── 슬래시 커맨드 + 컴포넌트 인터랙션 (Gateway) ───────────
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId === 'docs_select') {
@@ -76,23 +103,8 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   if (!interaction.isChatInputCommand()) return;
-  const ctx = { GAME_SERVER_URL, ADMIN_API_KEY, EmbedBuilder };
   try {
-    switch (interaction.commandName) {
-      case 'status':     await statusCmd.execute(interaction, ctx);    break;
-      case 'rooms':      await roomsCmd.execute(interaction, ctx);     break;
-      case 'close-room': await closeRoomCmd.execute(interaction, ctx); break;
-      case 'deploy':     await deployCmd.execute(interaction, ctx);    break;
-      case 'claude':     await claudeExecute(interaction);             break;
-      case 'be':         await executeBackend(interaction);            break;
-      case 'fe':         await executeFrontend(interaction);           break;
-      case 'skill':      await executeSkill(interaction);              break;
-      case 'docs':       await docsCmd.execute(interaction);           break;
-      case 'wakeup':     await wakeupCmd.execute(interaction);         break;
-      case 'dispatch':   await handleDispatchCommand(interaction);     break;
-      default:
-        await interaction.reply({ content: '알 수 없는 명령입니다.', ephemeral: true });
-    }
+    await routeCommand(interaction.commandName, interaction);
   } catch (err) {
     console.error(`[Bot] 명령 오류: ${interaction.commandName}`, err);
     const reply = { content: `오류: ${err.message}`, ephemeral: true };
@@ -331,3 +343,18 @@ client.on('error', (err) => console.error('[Bot] 클라이언트 오류:', err))
 process.on('unhandledRejection', (err) => console.error('[Bot] 미처리 거부:', err));
 
 client.login(process.env.DISCORD_TOKEN);
+
+// ─── HTTP Interaction 서버 (Cloudflare Worker 포워딩 수신) ──
+// PC 꺼진 상태에서 /wakeup은 Cloudflare Worker가 직접 처리하고,
+// PC 켜진 상태의 나머지 명령은 Worker → 이 HTTP 서버로 포워딩됨.
+const BOT_HTTP_PORT = parseInt(process.env.BOT_HTTP_PORT || '4040', 10);
+const BOT_FORWARD_SECRET = process.env.BOT_FORWARD_SECRET || '';
+
+startInteractionServer({
+  port: BOT_HTTP_PORT,
+  forwardSecret: BOT_FORWARD_SECRET,
+  handleCommand: async (commandName, fakeInteraction) => {
+    console.log(`[Interaction] HTTP command: /${commandName}`);
+    await routeCommand(commandName, fakeInteraction);
+  },
+});

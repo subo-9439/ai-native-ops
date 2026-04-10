@@ -86,10 +86,19 @@ const commands = [
     .setName('docs')
     .setDescription('프로젝트 문서 목록 조회 및 스레드로 보기'),
 
-  // ─── PC 원격 부팅 ─────────────────────────────────────────
+  // ─── 서버 원격 부팅 ──────────────────────────────────────
   new SlashCommandBuilder()
     .setName('wakeup')
-    .setDescription('🖥️ PC 원격 부팅 (Wake-on-LAN)'),
+    .setDescription('🖥️ 서버 원격 부팅 (Wake-on-LAN)')
+    .addStringOption(opt =>
+      opt.setName('target')
+        .setDescription('부팅할 서버 (기본: server1)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'server1 (Windows PC)', value: 'server1' },
+          { name: 'server2 (MacBook)',    value: 'server2' },
+        )
+    ),
 ].map(cmd => cmd.toJSON());
 
 const TOKEN = process.env.DISCORD_TOKEN;

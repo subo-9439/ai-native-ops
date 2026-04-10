@@ -10,10 +10,7 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
 
-    if (!process.env.PC_MAC || !process.env.PC_PUBLIC_IP) {
-      await interaction.editReply('❌ `PC_MAC` 또는 `PC_PUBLIC_IP` 환경변수가 설정되지 않았습니다.');
-      return;
-    }
+    const target = interaction.options?.getString('target') || 'server1';
 
     try {
       const res = await fetch(`${WOL_WORKER_URL}/wakeup`, {
@@ -22,15 +19,12 @@ module.exports = {
           'Content-Type': 'application/json',
           'x-wol-secret': WOL_SECRET,
         },
-        body: JSON.stringify({
-          mac: process.env.PC_MAC,
-          ip:  process.env.PC_PUBLIC_IP,
-        }),
+        body: JSON.stringify({ target }),
       });
 
       if (res.ok) {
         await interaction.editReply(
-          '🖥️ **PC 부팅 시도!**\n' +
+          `🖥️ **${target} 부팅 시도!**\n` +
           '매직 패킷 전송됨. 약 30~60초 후 온라인 됩니다.\n' +
           '`/status` 로 서버 상태를 확인하세요.'
         );
