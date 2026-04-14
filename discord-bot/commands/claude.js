@@ -1,121 +1,155 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const { EmbedBuilder } = require('discord.js');
+const { buildFullPrompt, writeOpsLog, extractSummary, extractChangedFiles } = require('../context-manager');
+const { appendChangelog } = require('../changelog-manager');
 
 const MAX_LEN = 1900;
 const STREAM_INTERVAL_MS = 4000;
 
+// ─── 채널별 모델 설정 로더 ───────────────────────────────
+const CHANNEL_CONFIG_PATH = path.resolve(__dirname, '..', '..', 'channel-config.json');
+
 /**
- * 에이전트 역할별 context prefix
+ * 채널/역할에 맞는 모델 반환. 파일을 매번 읽어서 재시작 없이 변경 반영.
+ * 파일 없거나 파싱 실패 시 → null (Claude CLI 기본값 사용)
  */
+function getModelForRole(role) {
+  try {
+    if (!fs.existsSync(CHANNEL_CONFIG_PATH)) return null;
+    const cfg = JSON.parse(fs.readFileSync(CHANNEL_CONFIG_PATH, 'utf-8'));
+    const roleCfg = cfg.roles?.[role];
+    return roleCfg?.model || cfg.defaults?.model || null;
+  } catch (err) {
+    console.error('[Model] channel-config 읽기 실패:', err.message);
+    return null;
+  }
+}
+
+/** Claude CLI args 배열 생성 (모델 플래그 포함) */
+function buildClaudeArgs(role) {
+  const args = ['--print', '--dangerously-skip-permissions'];
+  const model = getModelForRole(role);
+  if (model) args.push('--model', model);
+  return args;
+}
+
+/**
+ * 통합 개발 에이전트 컨텍스트 — 모든 dev 작업이 동일한 컨텍스트를 사용
+ * 디스패치 섹션(BE/FE/AI)은 작업 영역만 명시하여 동일 컨텍스트에 추가
+ */
+const DEV_CONTEXT = `[역할: whosbuying 통합 개발 에이전트]
+백엔드/프론트엔드/AI 서버 모두 다룰 수 있는 풀스택 에이전트.
+
+[작업 영역]
+- 게임 서버: game_project_server/ (Spring Boot 3, Java 21, MariaDB, Redis, RabbitMQ, WebSocket/STOMP)
+- Flutter 앱: game_project_app/ (riverpod, dio, stomp_dart_client)
+- Flutter 웹: game_project_web/ (앱 모듈 재사용)
+- AI 서버: game_project_ai/ (Spring Boot + Gemini REST)
+
+[원칙]
+- Web = SSOT, Mobile은 WebView Host 우선
+- 기존 API 호환성 유지, 작은 단위 커밋
+- 브랜치: claude/dev
+- 테스트가 없는 모듈에는 새로 추가하지 않음
+
+[Memory-Bank 갱신 의무 — Cline 원칙 (필수)]
+당신은 매 작업 전 docs/memory-bank/ 의 4개 파일을 반드시 읽는다. 이는 선택이 아니다.
+- activeContext.md: 현재 포커스, 최근 변경, 다음 단계
+- progress.md: 기능별 완료 상태, 알려진 이슈
+- systemPatterns.md: 코드 패턴/관례
+- decisions.md: CEO 합의된 결정사항
+
+작업 완료 후 관련 파일을 즉시 업데이트한다:
+- activeContext.md: 방금 한 작업을 "최근 변경"으로 이동, "다음 단계" 기록
+- progress.md: 완료 항목 이동, 새 이슈 발견 시 추가
+- systemPatterns.md: 새 재사용 패턴 발견 시에만 추가
+
+파일 크기 ~3KB 초과 시 오래된 내용은 docs/CHANGELOG.md 로 이동한다.
+메모리-뱅크 갱신은 코드 변경과 같은 커밋에 포함한다.
+
+[문서 동기화 의무]
+- API 변경 시 docs/API_REFERENCE.md 갱신
+- 인프라 변경 시 docs/INFRASTRUCTURE.md 갱신
+- 코드 변경과 문서 갱신은 같은 커밋에 포함
+
+[SSOT 참고 문서]
+- docs/PRD.md, docs/ARCHITECTURE.md
+- docs/BUSINESS_LOGIC_AND_TABLES.md
+- docs/API_REFERENCE.md, docs/SCREEN_API_MAPPING.md
+- docs/INFRASTRUCTURE.md
+- docs/CHANGELOG.md (최근 변경 확인용)
+
+[실행 원칙]
+- 확인 질문 없이 즉시 작업을 수행한다.
+- "수정할까요?"라고 묻지 말고 바로 수정한다.
+- 작업 완료 후 변경 내용을 요약한다.
+
+[작업 지시]
+`;
+
 const AGENT_CONTEXTS = {
-  'backend-dev': `[역할: 백엔드 에이전트]
-전문 영역: Spring Boot 게임 서버
-작업 경로: game_project_server/
-기술 스택: Spring Boot 3, Redis, RabbitMQ, MariaDB, WebSocket/STOMP, Docker
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리 (특히 CURRENT_SPRINT.md, BUSINESS_LOGIC_AND_TABLES.md)
-원칙: 기존 API 호환성 유지, 작은 단위 커밋, 테스트 코드 없으면 추가하지 않음
+  'dev':          DEV_CONTEXT,
+  '잡담':         DEV_CONTEXT,
+  // 디스패치 섹션 — 컨텍스트는 동일, 작업 영역만 명시
+  'backend-dev':  DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: 백엔드 game_project_server/]\n\n[작업 지시]'),
+  'frontend-dev': DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: 프론트엔드 game_project_app/, game_project_web/]\n\n[작업 지시]'),
+  'ai-dev':       DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: AI 서버 game_project_ai/]\n\n[작업 지시]'),
 
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
+  'ceo': `[역할: CEO 기획 어드바이저]
+당신은 whosbuying 게임 프로젝트의 기획/전략 어드바이저입니다.
+CEO와 프로젝트 방향, 기능 기획, 우선순위를 논의합니다.
 
-[작업 지시]
-`,
+[Memory-Bank 기반 대화 — 필수]
+매 응답 전 docs/memory-bank/ 의 4개 파일을 반드시 읽는다:
+- activeContext.md: 현재 진행 중인 작업, 최근 변경, 다음 단계
+- progress.md: 기능별 진행 상태, 알려진 이슈
+- decisions.md: 이전에 합의된 결정사항
+- systemPatterns.md: 반복되는 패턴/관례
 
-  'frontend-dev': `[역할: 프론트엔드 에이전트]
-전문 영역: Flutter Web/App
-작업 경로: game_project_app/, game_project_web/
-기술 스택: Flutter, Dart, flutter_riverpod, dio, stomp_dart_client
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리 (특히 CURRENT_SPRINT.md, SCREEN_API_MAPPING.md)
-원칙: Web이 SSOT, Mobile은 WebView Host 우선, 작은 단위 커밋
+이를 기반으로 이전 맥락과 일관되게 응답한다.
 
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
+[Memory-Bank 갱신 의무]
+- CEO와 새로운 결정을 합의하면 decisions.md 에 "## YYYY-MM-DD" 섹션으로 append
+  형식: 결정 제목 + 핵심 요점 + "Reasoning: 이유"
+- 디스패치 지시문 작성 시 activeContext.md 의 "다음 단계"를 갱신
+- 새 계획 발견 시 progress.md 의 "🚧 진행 중" 에 추가
 
-[작업 지시]
-`,
+[프로젝트 참고 문서]
+- docs/PRD.md, docs/ARCHITECTURE.md, docs/GAME_DESIGN.md
+- docs/BUSINESS_LOGIC_AND_TABLES.md, docs/INFRASTRUCTURE.md
+- docs/CHANGELOG.md (최근 변경 기록)
 
-  'ai-dev': `[역할: AI 서버 에이전트]
-전문 영역: AI 서버 (Spring Boot + Gemini API)
-작업 경로: game_project_ai/
-기술 스택: Spring Boot 3, Gemini REST API
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리
+[응답 원칙]
+- CEO의 아이디어에 대해 기술적 실현 가능성과 공수를 판단한다.
+- memory-bank의 현재 상태를 근거로 답변한다 (이미 있는 것을 또 하자고 하지 않음).
+- 필요하면 대안을 제시한다.
+- 합의된 작업은 디스패치 형식(---BE---/---FE---/---AI---)으로 정리하여 제안한다.
+- 답변은 한글, 간결하게.
 
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
-
-[작업 지시]
-`,
-
-  '잡담': `[역할: 풀스택/AI 에이전트]
-전체 프로젝트에 대한 작업을 수행합니다.
-AI 서버 작업 시: 작업 경로 game_project_ai/ (Spring Boot + Gemini API)
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리
-
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
-
-[작업 지시]
-`,
-
-  '기획-백로그': `[역할: 풀스택/AI 에이전트]
-기획 및 백로그 관련 작업을 수행합니다.
-전체 프로젝트에 대한 분석, 설계, 우선순위 결정을 지원합니다.
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리 (CURRENT_SPRINT.md, BUSINESS_LOGIC_AND_TABLES.md)
-
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
-
-[작업 지시]
-`,
-
-  'claude-dev': `[역할: 풀스택/AI 에이전트]
-전체 프로젝트에 대한 작업을 수행합니다.
-AI 서버 작업 시: 작업 경로 game_project_ai/ (Spring Boot + Gemini API)
-브랜치: claude/dev
-SSOT 참고: docs/ 디렉터리
-
-[실행 원칙]
-- 확인 질문 없이 즉시 작업을 수행한다.
-- 분석 후 "수정할까요?"라고 묻지 말고 바로 코드를 수정한다.
-- 작업 완료 후 변경 내용을 요약한다.
-
-[작업 지시]
+[CEO 지시]
 `,
 };
 
-/** 에이전트별 표시 라벨 */
+/** 채널/역할별 표시 라벨 */
 const CHANNEL_LABELS = {
-  'backend-dev':  '🔧 BE (Spring Boot)',
-  'frontend-dev': '🎨 FE (Flutter)',
-  'ai-dev':       '🤖 AI (Gemini)',
-  'claude-dev':   '⚡ 풀스택',
+  'dev':          '⚡ 개발',
+  'backend-dev':  '🔧 BE (디스패치)',
+  'frontend-dev': '🎨 FE (디스패치)',
+  'ai-dev':       '🤖 AI (디스패치)',
+  'ceo':          '👔 CEO 기획실',
   '잡담':         '💬 잡담',
-  '기획-백로그':  '📋 기획/백로그',
 };
 
-/** 에이전트별 Embed 색상 */
+/** 채널/역할별 Embed 색상 */
 const CHANNEL_COLORS = {
+  'dev':          0xFEE75C,  // 노랑
   'backend-dev':  0x5865F2,  // 파랑
   'frontend-dev': 0x57F287,  // 초록
   'ai-dev':       0xEB459E,  // 보라/핑크
-  'claude-dev':   0xFEE75C,  // 노랑
+  'ceo':          0xFFD700,  // 금색
   '잡담':         0xED4245,  // 빨강
-  '기획-백로그':  0xF47FFF,  // 라벤더
 };
 
 /**
@@ -196,29 +230,36 @@ function buildResultEmbed(channelName, label, buffer, timedOut) {
  * 기획실 병렬 dispatch에서 사용
  * @returns Promise<{ channelName, label, buffer, timedOut }>
  */
-async function runClaudeToThread(thread, userMessage, channelName) {
+async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) throw new Error('CLAUDE_PROJECT_DIR 환경변수 없음');
 
-  const contextPrefix = AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['claude-dev'];
-  const fullMessage = contextPrefix + userMessage;
+  const contextPrefix = AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['dev'];
+  const fullMessage = await buildFullPrompt({
+    projectDir,
+    thread: opts.injectThreadContext ? thread : null,
+    agentContext: contextPrefix,
+    userMessage,
+  });
   const label = CHANNEL_LABELS[channelName] || channelName;
+  const model = getModelForRole(channelName);
+  const modelTag = model ? ` · model: ${model}` : '';
 
-  const statusMsg = await thread.send(`⏳ **${label}** 작업 시작...`);
+  const statusMsg = await thread.send(`⏳ **${label}** 작업 시작...${modelTag}`);
   let buffer = '';
   let lastUpdate = Date.now();
 
   const flushStatus = async () => {
     const preview = buffer.slice(-1200).replace(/`/g, "'");
     try {
-      await statusMsg.edit(`⏳ **${label}** 진행 중...\n\`\`\`\n${preview}\n\`\`\``);
+      await statusMsg.edit(`⏳ **${label}** 진행 중...${modelTag}\n\`\`\`\n${preview}\n\`\`\``);
     } catch (_) {}
   };
 
   return new Promise((resolve, reject) => {
     const proc = spawn(
       'claude',
-      ['--print', '--dangerously-skip-permissions'],
+      buildClaudeArgs(channelName),
       { cwd: projectDir, env: process.env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] }
     );
 
@@ -247,6 +288,13 @@ async function runClaudeToThread(thread, userMessage, channelName) {
       clearTimeout(timeout);
       // 진행 중 메시지 삭제 (결과 embed로 대체)
       statusMsg.delete().catch(() => {});
+
+      // L2: ops context log + changelog에 작업 결과 기록
+      const summary = extractSummary(buffer);
+      const files = extractChangedFiles(buffer);
+      writeOpsLog(projectDir, { agent: label, task: userMessage.substring(0, 200), summary, files });
+      appendChangelog(projectDir, { agent: label, task: userMessage.substring(0, 200), summary, files });
+
       resolve({ channelName, label, buffer, timedOut: false });
     });
 
@@ -268,11 +316,13 @@ async function runClaude(interaction, userMessage, opts = {}) {
     return;
   }
 
-  const contextPrefix = AGENT_CONTEXTS[opts.channelName] || AGENT_CONTEXTS['claude-dev'];
+  const contextPrefix = AGENT_CONTEXTS[opts.channelName] || AGENT_CONTEXTS['dev'];
   const fullMessage = contextPrefix + userMessage;
+  const model = getModelForRole(opts.channelName);
+  const modelTag = model ? ` · ${model}` : '';
 
   const title = opts.taskTitle ? `**[${opts.taskTitle}]**\n` : '';
-  const roleLabel = opts.channelName ? ` (${opts.channelName})` : '';
+  const roleLabel = opts.channelName ? ` (${opts.channelName}${modelTag})` : modelTag;
   await interaction.editReply(
     `${title}⏳ Claude 에이전트${roleLabel} 실행 중...\n\`\`\`\n${userMessage.substring(0, 120)}${userMessage.length > 120 ? '...' : ''}\n\`\`\``
   );
@@ -292,7 +342,7 @@ async function runClaude(interaction, userMessage, opts = {}) {
 
   const proc = spawn(
     'claude',
-    ['--print', '--dangerously-skip-permissions'],
+    buildClaudeArgs(opts.channelName),
     { cwd: projectDir, env: process.env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] }
   );
 
@@ -389,11 +439,18 @@ function resolveChannelName(interaction, override) {
 }
 
 const SKILLS = {
-  review: (target) => `현재 변경된 파일(git diff HEAD)을 코드 리뷰해줘.${target ? ` 대상: ${target}` : ''}\n- 버그 가능성, 성능 이슈, 코드 스타일 순으로 정리\n- 심각도(High/Med/Low)를 붙여서 3줄 이내로 요약\n- 수정 제안은 diff 형태로`,
-  sprint:  ()       => `docs/CURRENT_SPRINT.md 와 docs/DECISIONS.md 를 읽고:\n1. 현재 스프린트 진행 상태 요약\n2. 완료된 항목 / 남은 항목\n3. 다음 우선순위 3가지 제안`,
-  pr:      (title)  => `현재 claude/dev 브랜치의 변경사항으로 main 대상 PR을 생성해줘.\n제목: ${title || '(변경 내용 기반으로 자동 생성)'}\n- PR 본문: 변경 이유, 주요 변경점, 테스트 방법 포함`,
-  test:    (file)   => `${file ? `${file} 파일` : '최근 변경된 파일'}에 대한 유닛 테스트를 작성해줘.\n- 기존 테스트 스타일/프레임워크 따르기\n- 정상 케이스 + 엣지 케이스 포함`,
-  explain: (file)   => `${file ? `${file}` : '현재 작업 중인 핵심 파일'}을 읽고 설명해줘.\n- 목적, 주요 로직, 의존성을 한글로\n- 처음 보는 사람도 이해할 수 있는 수준`,
+  review:   (target) => `현재 변경된 파일(git diff HEAD)을 코드 리뷰해줘.${target ? ` 대상: ${target}` : ''}\n- 버그 가능성, 성능 이슈, 코드 스타일 순으로 정리\n- 심각도(High/Med/Low)를 붙여서 3줄 이내로 요약\n- 수정 제안은 diff 형태로`,
+  sprint:   ()       => `docs/CURRENT_SPRINT.md 와 docs/DECISIONS.md 를 읽고:\n1. 현재 스프린트 진행 상태 요약\n2. 완료된 항목 / 남은 항목\n3. 다음 우선순위 3가지 제안`,
+  pr:       (title)  => `현재 claude/dev 브랜치의 변경사항으로 main 대상 PR을 생성해줘.\n제목: ${title || '(변경 내용 기반으로 자동 생성)'}\n- PR 본문: 변경 이유, 주요 변경점, 테스트 방법 포함`,
+  test:     (file)   => `${file ? `${file} 파일` : '최근 변경된 파일'}에 대한 유닛 테스트를 작성해줘.\n- 기존 테스트 스타일/프레임워크 따르기\n- 정상 케이스 + 엣지 케이스 포함`,
+  explain:  (file)   => `${file ? `${file}` : '현재 작업 중인 핵심 파일'}을 읽고 설명해줘.\n- 목적, 주요 로직, 의존성을 한글로\n- 처음 보는 사람도 이해할 수 있는 수준`,
+  'doc-sync': ()     => `API 문서 동기화 작업을 수행해줘.
+1. game_project_server의 모든 Controller를 스캔해서 현재 엔드포인트 목록을 추출한다.
+2. docs/API_REFERENCE.md의 내용과 비교한다.
+3. 추가/변경/삭제된 엔드포인트가 있으면 docs/API_REFERENCE.md를 갱신한다.
+4. WebSocket @MessageMapping도 확인한다.
+5. 클라이언트(game_project_app)의 API client도 확인해서 파일:라인 참조를 업데이트한다.
+6. 변경 사항을 요약하고, 변경이 없으면 "문서 최신 상태"라고 보고한다.`,
 };
 
 module.exports = {
@@ -410,20 +467,7 @@ module.exports = {
   async execute(interaction) {
     const message = interaction.options.getString('message');
     await interaction.deferReply();
-    const channelName = resolveAgentFromContent(message);
-    await runClaude(interaction, message, { channelName });
-  },
-
-  async executeBackend(interaction) {
-    const message = interaction.options.getString('message');
-    await interaction.deferReply();
-    await runClaude(interaction, message, { channelName: 'backend-dev' });
-  },
-
-  async executeFrontend(interaction) {
-    const message = interaction.options.getString('message');
-    await interaction.deferReply();
-    await runClaude(interaction, message, { channelName: 'frontend-dev' });
+    await runClaude(interaction, message, { channelName: 'dev' });
   },
 
   async executeSkill(interaction) {

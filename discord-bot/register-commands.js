@@ -1,70 +1,58 @@
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const commands = [
+  // ─── 게임 서버 운영 ──────────────────────────────────────
   new SlashCommandBuilder()
-    .setName('status')
-    .setDescription('게임 서버 상태 조회'),
+    .setName('game-server-status')
+    .setDescription('🎮 game_project_server 상태 조회 (방 수, 활성 플레이어, 메모리)'),
 
   new SlashCommandBuilder()
-    .setName('rooms')
-    .setDescription('활성 방 목록 조회'),
+    .setName('game-rooms')
+    .setDescription('🎮 game_project_server 활성 방 목록'),
 
   new SlashCommandBuilder()
     .setName('close-room')
-    .setDescription('방 강제 종료')
+    .setDescription('🎮 게임 방 강제 종료')
     .addStringOption(opt =>
       opt.setName('code').setDescription('방 코드').setRequired(true)
     ),
 
+  // ─── 배포 ────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName('deploy')
-    .setDescription('배포 트리거')
+    .setDescription('🚀 GitHub Actions 배포 트리거')
     .addStringOption(opt =>
       opt.setName('target')
         .setDescription('배포 대상')
         .setRequired(true)
         .addChoices(
-          { name: 'web', value: 'web' },
-          { name: 'server', value: 'server' },
-          { name: 'android', value: 'android' }
+          { name: 'web (Flutter Web → Firebase Hosting)', value: 'web' },
+          { name: 'android (APK → Firebase App Distribution)', value: 'android' }
         )
     ),
-  // ─── Claude 에이전트 커맨드 ──────────────────────────────
-  new SlashCommandBuilder()
-    .setName('claude')
-    .setDescription('Claude 에이전트 실행 (현재 채널 역할 자동 적용)')
-    .addStringOption(opt =>
-      opt.setName('message').setDescription('실행할 명령').setRequired(true)
-    ),
 
+  // ─── 통합 개발 에이전트 ──────────────────────────────────
   new SlashCommandBuilder()
-    .setName('be')
-    .setDescription('Backend 에이전트 실행 (Spring Boot 전담)')
+    .setName('dev')
+    .setDescription('⚡ 통합 개발 에이전트 (BE/FE/AI 모두 가능)')
     .addStringOption(opt =>
-      opt.setName('message').setDescription('백엔드 작업 명령').setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('fe')
-    .setDescription('Frontend 에이전트 실행 (Flutter 전담)')
-    .addStringOption(opt =>
-      opt.setName('message').setDescription('프론트엔드 작업 명령').setRequired(true)
+      opt.setName('message').setDescription('작업 명령').setRequired(true)
     ),
 
   // ─── 스킬 커맨드 ─────────────────────────────────────────
   new SlashCommandBuilder()
     .setName('skill')
-    .setDescription('스킬 프리셋 실행 (review / sprint / pr / test / explain)')
+    .setDescription('🛠️ 스킬 프리셋 실행')
     .addStringOption(opt =>
       opt.setName('skill')
         .setDescription('실행할 스킬')
         .setRequired(true)
         .addChoices(
-          { name: '🔍 review — 코드 리뷰',          value: 'review'  },
-          { name: '📊 sprint — 스프린트 현황',        value: 'sprint'  },
-          { name: '🚀 pr     — PR 생성',              value: 'pr'      },
-          { name: '🧪 test   — 테스트 코드 작성',     value: 'test'    },
-          { name: '📖 explain — 파일/코드 설명',      value: 'explain' },
+          { name: '🔍 review — 코드 리뷰',         value: 'review'  },
+          { name: '📊 sprint — 스프린트 현황',     value: 'sprint'  },
+          { name: '🚀 pr     — PR 생성',           value: 'pr'      },
+          { name: '🧪 test   — 테스트 코드 작성',  value: 'test'    },
+          { name: '📖 explain — 파일/코드 설명',   value: 'explain' },
         )
     )
     .addStringOption(opt =>
@@ -74,31 +62,17 @@ const commands = [
   // ─── CEO 기획실 병렬 dispatch ────────────────────────────
   new SlashCommandBuilder()
     .setName('dispatch')
-    .setDescription('BE/FE/AI 에이전트에 병렬 dispatch (---BE--- ---FE--- ---AI--- 섹션 구분)')
+    .setDescription('👔 BE/FE/AI 병렬 디스패치 (---BE---/---FE---/---AI--- 섹션)')
     .addStringOption(opt =>
       opt.setName('directive')
-        .setDescription('지시문 (---BE--- / ---FE--- / ---AI--- 섹션 구분자로 각 역할 지정)')
+        .setDescription('---BE--- / ---FE--- / ---AI--- 섹션 구분자로 각 역할 지정')
         .setRequired(true)
     ),
 
   // ─── 문서 ────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName('docs')
-    .setDescription('프로젝트 문서 목록 조회 및 스레드로 보기'),
-
-  // ─── 서버 원격 부팅 ──────────────────────────────────────
-  new SlashCommandBuilder()
-    .setName('wakeup')
-    .setDescription('🖥️ 서버 원격 부팅 (Wake-on-LAN)')
-    .addStringOption(opt =>
-      opt.setName('target')
-        .setDescription('부팅할 서버 (기본: server1)')
-        .setRequired(false)
-        .addChoices(
-          { name: 'server1 (Windows PC)', value: 'server1' },
-          { name: 'server2 (MacBook)',    value: 'server2' },
-        )
-    ),
+    .setDescription('📚 프로젝트 문서 목록 조회'),
 ].map(cmd => cmd.toJSON());
 
 const TOKEN = process.env.DISCORD_TOKEN;

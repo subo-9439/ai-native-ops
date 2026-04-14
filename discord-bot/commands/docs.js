@@ -2,29 +2,45 @@ const fs   = require('fs');
 const path = require('path');
 const { StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 
-// ─── 문서 목록 ────────────────────────────────────────────────────────────────
+// ─── 게이트웨이 SSO ────────────────────────────────────────────────────────────
+const GATEWAY_INTERNAL = process.env.GATEWAY_INTERNAL_URL || 'http://127.0.0.1:4000';
+const GATEWAY_PUBLIC   = process.env.PUBLIC_BASE_URL      || GATEWAY_INTERNAL;
+const GATEWAY_SSO_SECRET = process.env.GATEWAY_SSO_SECRET || '';
+
+/**
+ * 게이트웨이에서 SSO 토큰 URL 발급
+ * @param {string} targetPath  예: '/admin/wiki' 또는 '/admin/wiki/doc/PRD'
+ * @returns {Promise<string|null>}  성공 시 공개 URL, 실패 시 null
+ */
+async function issueSsoUrl(targetPath = '/admin/wiki') {
+  try {
+    const res = await fetch(`${GATEWAY_INTERNAL}/auth/sso`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-sso-secret': GATEWAY_SSO_SECRET,
+      },
+      body: JSON.stringify({ target: targetPath }),
+    });
+    if (!res.ok) return null;
+    const { url } = await res.json();
+    return url;
+  } catch (err) {
+    console.error('[docs] SSO 발급 실패:', err.message);
+    return null;
+  }
+}
+
 const DOCS = [
-  { label: '📋 프로젝트 개요',         value: 'prd_overview',    file: 'docs/PRD/PROJECT_OVERVIEW.md' },
-  { label: '💰 수익화 전략',           value: 'prd_monetize',    file: 'docs/PRD/MONETIZATION.md' },
-  { label: '🏗️ 아키텍처 목표',         value: 'arch_target',     file: 'docs/ARCH/target_state.md' },
-  { label: '🎮 비즈니스 로직/테이블',  value: 'biz_logic',       file: 'docs/BUSINESS_LOGIC_AND_TABLES.md' },
-  { label: '🖥️ 화면 계획',            value: 'screen_plan',     file: 'docs/SCREEN_PLAN.md' },
-  { label: '🔌 임베드 가이드',         value: 'embed_guide',     file: 'docs/EMBED_GUIDE.md' },
-  { label: '🔗 브릿지 설계',           value: 'bridge',          file: 'docs/BRIDGE.md' },
-  { label: '📡 채널 설계',             value: 'channel',         file: 'docs/CHANNEL.md' },
-  { label: '🔗 통합 가이드',           value: 'integration',     file: 'docs/integration/INTEGRATION_GUIDE.md' },
-  { label: '🚀 GitHub Actions 셋업',  value: 'gh_actions',      file: 'docs/GITHUB_ACTIONS_SETUP.md' },
-  { label: '🛠️ 셀프호스트 셋업',       value: 'selfhost',        file: 'docs/SELFHOST_SETUP.md' },
-  { label: '🤖 AI 설정 동기화',        value: 'ai_config',       file: 'docs/AI_CONFIG_SYNC.md' },
-  { label: '🧠 하네스 분할 가이드',    value: 'harness_split',   file: 'docs/ai/HARNESS_SPLIT_GUIDE.md' },
-  { label: '🎯 경매 미니게임 설계',    value: 'game_auction',    file: 'docs/game_design_auction_minigame.md' },
-  { label: '💣 폭탄 도미노 설계',      value: 'game_bomb',       file: 'docs/game_design_bomb_domino_detail.md' },
-  { label: '🎨 UI 컴포넌트 규칙',      value: 'ui_rules',        file: 'docs/ui_component_rules.md' },
-  { label: '🔄 라운드 레디 수정',      value: 'round_ready',     file: 'docs/round_ready_process_fix.md' },
-  { label: '📊 SQL 로깅',              value: 'sql_logging',     file: 'docs/SQL_LOGGING.md' },
-  { label: '🌐 WebSocket 에러 추적',   value: 'ws_errors',       file: 'docs/websocket_error_tracking_test_guide.md' },
-  { label: '🔍 통합 에러 추적 테스트', value: 'error_tracking',  file: 'docs/unified_error_tracking_test_guide.md' },
-  { label: '📝 작업 로그',             value: 'work_log',        file: 'docs/WORK_LOG.md' },
+  { label: '📋 PRD (프로젝트 개요/수익)',    value: 'prd',            file: 'docs/PRD.md' },
+  { label: '🏗️ 아키텍처 (채널/브릿지/임베드)', value: 'architecture',  file: 'docs/ARCHITECTURE.md' },
+  { label: '🎮 비즈니스 로직/테이블',        value: 'biz_logic',      file: 'docs/BUSINESS_LOGIC_AND_TABLES.md' },
+  { label: '🎯 미니게임 설계',               value: 'game_design',    file: 'docs/GAME_DESIGN.md' },
+  { label: '🔧 인프라 & CI/CD',              value: 'infra',          file: 'docs/INFRASTRUCTURE.md' },
+  { label: '🐛 에러 추적 & 트러블슈팅',      value: 'troubleshooting', file: 'docs/TROUBLESHOOTING.md' },
+  { label: '🛠️ 개발 가이드 (UI/SQL)',         value: 'dev_guide',      file: 'docs/DEV_GUIDE.md' },
+  { label: '🤖 AI 도구 설정 & 연동',         value: 'ai_ops',         file: 'docs/AI_OPS.md' },
+  { label: '📝 작업 로그',                   value: 'work_log',       file: 'docs/WORK_LOG.md' },
 ];
 
 const MAX_CHUNK = 1900;
@@ -59,20 +75,25 @@ async function execute(interaction) {
 
   const row = new ActionRowBuilder().addComponents(select);
 
+  // SSO URL 발급 (자동 로그인)
+  const ssoUrl = await issueSsoUrl('/admin/wiki');
+  const wikiLink = ssoUrl
+    ? `**[🔓 위키 열기 (자동 로그인)](${ssoUrl})**\n└ 5분 내 클릭, 일회용 링크`
+    : `**[위키 열기](${GATEWAY_PUBLIC}/admin/wiki)** (아이디/비번 입력 필요)`;
+
   const embed = new EmbedBuilder()
     .setTitle('📚 프로젝트 문서 인덱스')
     .setDescription(
-      '아래 드롭다운에서 문서를 선택하면\n' +
-      '이 채널에 **스레드**가 생성되고 전체 내용이 올라갑니다.'
+      '아래 드롭다운에서 문서를 선택하면 **스레드**로 전체 내용이 올라갑니다.\n\n' +
+      wikiLink
     )
     .setColor(0x5865F2)
     .addFields(
-      { name: '📋 PRD',       value: 'PROJECT_OVERVIEW · MONETIZATION',                  inline: false },
-      { name: '🏗️ 아키텍처', value: 'ARCH · BRIDGE · CHANNEL · INTEGRATION',             inline: false },
-      { name: '🎮 게임/UI',   value: 'BUSINESS_LOGIC · SCREEN_PLAN · EMBED · UI_RULES',  inline: false },
-      { name: '⚙️ 개발 설정', value: 'GH_ACTIONS · SELFHOST · SQL_LOGGING · AI_CONFIG',  inline: false },
+      { name: '📋 기획',   value: 'PRD · GAME_DESIGN · BUSINESS_LOGIC',         inline: false },
+      { name: '🏗️ 기술',  value: 'ARCHITECTURE · INFRASTRUCTURE · DEV_GUIDE',  inline: false },
+      { name: '🔧 운영',   value: 'TROUBLESHOOTING · AI_OPS · WORK_LOG',        inline: false },
     )
-    .setFooter({ text: `총 ${DOCS.length}개 문서` });
+    .setFooter({ text: `총 ${DOCS.length}개 문서 · ${GATEWAY_PUBLIC}/admin/wiki` });
 
   await interaction.editReply({ embeds: [embed], components: [row] });
 }

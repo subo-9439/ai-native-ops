@@ -14,7 +14,8 @@ module.exports = {
     const { data } = await res.json();
 
     const embed = new EmbedBuilder()
-      .setTitle('서버 상태')
+      .setTitle('🎮 game_project_server 상태')
+      .setURL(GAME_SERVER_URL)
       .setColor(0x00AE86)
       .addFields(
         { name: '업타임', value: data.uptime || '-', inline: true },

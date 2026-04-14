@@ -17,7 +17,6 @@ const {
   executeSkill,
 } = require('./commands/claude');
 const docsCmd     = require('./commands/docs');
-const wakeupCmd   = require('./commands/wakeup');
 
 const client = new Client({
   intents: [
@@ -32,33 +31,30 @@ const GAME_SERVER_URL = process.env.GAME_SERVER_URL || 'http://game-server:8080'
 const ADMIN_API_KEY   = process.env.ADMIN_API_KEY   || '';
 
 /**
- * 에이전트 채널 목록
- * 여기에 메시지를 보내면 해당 역할로 Claude가 자동 실행됩니다.
+ * 에이전트 채널 목록 — 이모지 프리픽스 포함
+ * 여기에 메시지를 보내면 통합 개발 에이전트(Claude)가 자동 실행됩니다.
+ * BE/FE/AI 구분은 CEO 기획실의 디스패치 섹션(---BE---/---FE---/---AI---)으로만 처리.
  *
- * [멀티에이전트 구조]
- * - backend-dev  : Spring Boot 백엔드 전담
- * - frontend-dev : Flutter Web/App 전담
- * - ai-dev       : AI 서버 전담
- * - claude-dev   : 풀스택 (역할 없는 일반 요청)
+ * 내부 에이전트 역할 키는 'dev', '잡담'을 그대로 사용 (claude.js AGENT_CONTEXTS 매핑 유지).
  */
-const AGENT_CHANNELS = new Set(['claude-dev', 'backend-dev', 'frontend-dev', 'ai-dev', '잡담', '기획-백로그']);
+const AGENT_CHANNELS = new Map([
+  ['⚡-dev', 'dev'],
+  ['💬-잡담', '잡담'],
+]);
 
 /**
- * CEO 기획실 채널 + 기획방설계 채널
- * 이 채널에서 메시지 전송 → 스레드 생성 + BE/FE/AI 병렬 dispatch (반응 불필요)
- * 🤖 반응도 여전히 지원 (재디스패치용)
+ * CEO 기획실 채널
+ * 이 채널에서 메시지 전송 → 스레드 생성 + BE/FE/AI 병렬 dispatch
+ * 🤖 반응도 지원 (재디스패치용)
  */
-const CEO_CHANNEL      = process.env.CEO_CHANNEL_NAME      || 'ceo기획실디스패치';
-const PLANNING_CHANNEL = process.env.PLANNING_CHANNEL_NAME || '기획방설계';
-/** 메시지만 보내도 dispatch되는 채널 집합 */
-const DISPATCH_CHANNELS = new Set([CEO_CHANNEL, PLANNING_CHANNEL]);
+const CEO_CHANNEL = process.env.CEO_CHANNEL_NAME || '👔-ceo기획실';
+const DISPATCH_CHANNELS = new Set([CEO_CHANNEL]);
 const TRIGGER_EMOJI = '🤖';
 
 // ─── 봇 준비 ─────────────────────────────────────────────
 client.once('clientReady', () => {
   console.log(`[Bot] 로그인 완료: ${client.user.tag}`);
-  console.log(`[Bot] 에이전트 채널: ${[...AGENT_CHANNELS].map(c => '#' + c).join(', ')}`);
-  console.log(`[Bot] dispatch 채널(채팅→자동 dispatch): ${[...DISPATCH_CHANNELS].map(c => '#' + c).join(', ')}`);
+  console.log(`[Bot] 에이전트 채널: ${[...AGENT_CHANNELS.keys()].map(c => '#' + c).join(', ')}`);
   console.log(`[Bot] CEO 기획실: #${CEO_CHANNEL} (메시지 전송 또는 ${TRIGGER_EMOJI} 반응 시 병렬 dispatch)`);
 });
 
@@ -70,16 +66,14 @@ client.once('clientReady', () => {
 async function routeCommand(commandName, interaction) {
   const ctx = { GAME_SERVER_URL, ADMIN_API_KEY, EmbedBuilder };
   switch (commandName) {
-    case 'status':     await statusCmd.execute(interaction, ctx);    break;
-    case 'rooms':      await roomsCmd.execute(interaction, ctx);     break;
+    case 'game-server-status':
+                       await statusCmd.execute(interaction, ctx);    break;
+    case 'game-rooms': await roomsCmd.execute(interaction, ctx);     break;
     case 'close-room': await closeRoomCmd.execute(interaction, ctx); break;
     case 'deploy':     await deployCmd.execute(interaction, ctx);    break;
-    case 'claude':     await claudeExecute(interaction);             break;
-    case 'be':         await executeBackend(interaction);            break;
-    case 'fe':         await executeFrontend(interaction);           break;
+    case 'dev':        await claudeExecute(interaction);             break;
     case 'skill':      await executeSkill(interaction);              break;
     case 'docs':       await docsCmd.execute(interaction);           break;
-    case 'wakeup':     await wakeupCmd.execute(interaction);         break;
     case 'dispatch':   await handleDispatchCommand(interaction);     break;
     default:
       if (typeof interaction.reply === 'function') {
@@ -123,28 +117,90 @@ client.on('messageCreate', async (message) => {
   const channelName = message.channel.name;
   const userMessage = message.content;
 
-  // ── dispatch 채널 (기획방설계 / ceo기획실디스패치): 메시지 → 병렬 dispatch ──
+  // ── CEO 기획실: ---BE---/---FE---/---AI--- 있으면 디스패치, 없으면 대화 모드 ──
   if (DISPATCH_CHANNELS.has(channelName)) {
+    const hasDispatchSections = /---\s*(BE|FE|AI|ALL)\s*---/i.test(userMessage);
+
+    if (hasDispatchSections) {
+      // 디스패치 모드: 에이전트에 작업 명령
+      try {
+        await message.react('⏳');
+
+        const mm = String(new Date().getMonth() + 1).padStart(2, '0');
+        const dd = String(new Date().getDate()).padStart(2, '0');
+        const taskTitle = userMessage.split('\n')[0].substring(0, 45);
+        const threadName = `🎯 [${mm}/${dd}] ${taskTitle}`;
+
+        const thread = await message.startThread({
+          name: threadName,
+          autoArchiveDuration: 1440,
+        });
+
+        await dispatchToAgents(thread, userMessage);
+
+        const r = message.reactions.cache.get('⏳');
+        if (r) await r.remove().catch(() => {});
+        await message.react('✅');
+      } catch (err) {
+        console.error(`[Bot] dispatch 오류:`, err);
+        await message.reply(`❌ 오류: ${err.message}`);
+      }
+    } else {
+      // 대화 모드: CEO와 기획 논의 (Claude가 기획 어드바이저로 응답)
+      try {
+        await message.react('⏳');
+
+        const threadTitle = `💬 ${userMessage.substring(0, 60)}`;
+        const thread = await message.startThread({
+          name: threadTitle,
+          autoArchiveDuration: 1440,
+        });
+
+        const { label, buffer, timedOut } = await runClaudeToThread(
+          thread, userMessage, 'ceo',
+          { injectThreadContext: false }
+        );
+
+        const r = message.reactions.cache.get('⏳');
+        if (r) await r.remove().catch(() => {});
+        await message.react('✅');
+
+        await thread.send({ embeds: [buildResultEmbed('dev', label, buffer, timedOut)] });
+      } catch (err) {
+        console.error(`[Bot] CEO 대화 오류:`, err);
+        await message.reply(`❌ 오류: ${err.message}`);
+      }
+    }
+    return;
+  }
+
+  // ── 스레드 내 follow-up 메시지: 이전 대화 컨텍스트 포함하여 재실행 ──
+  if (message.channel.isThread()) {
+    const parentChannel = message.channel.parent;
+    if (!parentChannel) return;
+    const parentName = parentChannel.name;
+
+    // 에이전트 채널 또는 디스패치 채널의 스레드인 경우만 처리
+    if (!AGENT_CHANNELS.has(parentName) && !DISPATCH_CHANNELS.has(parentName)) return;
+
     try {
       await message.react('⏳');
 
-      const mm = String(new Date().getMonth() + 1).padStart(2, '0');
-      const dd = String(new Date().getDate()).padStart(2, '0');
-      const taskTitle = userMessage.split('\n')[0].substring(0, 45);
-      const threadName = `🎯 [${mm}/${dd}] ${taskTitle}`;
-
-      const thread = await message.startThread({
-        name: threadName,
-        autoArchiveDuration: 1440,
-      });
-
-      await dispatchToAgents(thread, userMessage);
+      const agentChannel = AGENT_CHANNELS.has(parentName) ? AGENT_CHANNELS.get(parentName)
+        : DISPATCH_CHANNELS.has(parentName) ? 'ceo'
+        : 'dev';
+      const { label, buffer, timedOut } = await runClaudeToThread(
+        message.channel, userMessage, agentChannel,
+        { injectThreadContext: true }
+      );
 
       const r = message.reactions.cache.get('⏳');
       if (r) await r.remove().catch(() => {});
       await message.react('✅');
+
+      await message.channel.send({ embeds: [buildResultEmbed(agentChannel, label, buffer, timedOut)] });
     } catch (err) {
-      console.error(`[Bot] dispatch 채널 오류 (${channelName}):`, err);
+      console.error(`[Bot] 스레드 follow-up 오류:`, err);
       await message.reply(`❌ 오류: ${err.message}`);
     }
     return;
@@ -152,6 +208,7 @@ client.on('messageCreate', async (message) => {
 
   // ── 에이전트 채널: 단일 에이전트 실행 ──
   if (!AGENT_CHANNELS.has(channelName)) return;
+  const agentRole = AGENT_CHANNELS.get(channelName);
 
   try {
     await message.react('⏳');
@@ -163,13 +220,13 @@ client.on('messageCreate', async (message) => {
       autoArchiveDuration: 60,
     });
 
-    const { label, buffer, timedOut } = await runClaudeToThread(thread, userMessage, channelName);
+    const { label, buffer, timedOut } = await runClaudeToThread(thread, userMessage, agentRole);
 
     const r = message.reactions.cache.get('⏳');
     if (r) await r.remove().catch(() => {});
     await message.react('✅');
 
-    await thread.send({ embeds: [buildResultEmbed(channelName, label, buffer, timedOut)] });
+    await thread.send({ embeds: [buildResultEmbed(agentRole, label, buffer, timedOut)] });
   } catch (err) {
     console.error(`[Bot] ${channelName} 오류:`, err);
     await message.reply(`❌ 오류: ${err.message}`);
