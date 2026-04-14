@@ -1,0 +1,206 @@
+# Discord 봇 — 프로젝트매니저#2209
+
+## 개요
+
+whosbuying 프로젝트를 Discord에서 운영·개발하기 위한 봇.
+게임 서버 상태 조회, Claude 에이전트 코드 작업, 배포 트리거를 Discord 안에서 수행한다.
+
+**실행 방식**: 맥북에서 로컬 실행 (Discord Gateway WebSocket 직접 연결)
+
+---
+
+## 슬래시 커맨드 (8개)
+
+| 커맨드 | 설명 | 필수 env |
+|---|---|---|
+| `/game-server-status` | 🎮 게임 서버 상태 조회 | `GAME_SERVER_URL`, `ADMIN_API_KEY` |
+| `/game-rooms` | 🎮 활성 방 리스트 | 동일 |
+| `/close-room <code>` | 🎮 특정 방 강제 종료 | 동일 |
+| `/deploy <web\|android>` | 🚀 GitHub Actions workflow_dispatch | `GITHUB_PAT` |
+| `/dev <message>` | ⚡ 통합 개발 에이전트 실행 | `CLAUDE_PROJECT_DIR` |
+| `/skill <name>` | 🛠️ 스킬 프리셋 (review/sprint/pr/test/explain) | `CLAUDE_PROJECT_DIR` |
+| `/dispatch <directive>` | 👔 BE/FE/AI 병렬 디스패치 | `CLAUDE_PROJECT_DIR` |
+| `/docs` | 📚 문서 인덱스 + 위키 자동 로그인 SSO 링크 | `GATEWAY_INTERNAL_URL` |
+
+### 커맨드 등록
+
+슬래시 커맨드가 Discord에 안 보이면 등록 필요 (초기 1회 또는 변경 시):
+
+```bash
+cd discord-bot
+set -a; source ../.env; set +a
+DISCORD_GUILD_ID=1491466936863821857 node register-commands.js
+```
+
+---
+
+## 채널 구성
+
+```
+nolza-dev/
+├── #👔-ceo기획실   ← 기획 대화 + 디스패치 (메인)
+├── #⚡-dev         ← 통합 개발 에이전트
+├── #💬-잡담        ← 범용
+├── #🔍-pr-리뷰
+├── #🚀-배포-로그
+└── #📢-공지
+```
+
+| 채널명 (Discord) | 내부 역할 키 | 역할 |
+|---|---|---|
+| `#👔-ceo기획실` | `ceo` | 기획 어드바이저 + 디스패치 |
+| `#⚡-dev` | `dev` | 통합 개발 (BE/FE/AI 통합) |
+| `#💬-잡담` | `잡담` | 범용 |
+
+---
+
+## `#👔-ceo기획실` — 두 가지 모드
+
+### 1️⃣ 대화 모드 (기본)
+일반 메시지 → Claude가 **기획 어드바이저**로 응답.
+- 아이디어 검토, 기술 실현 가능성, 공수 판단, 대안 제시
+- 합의된 작업은 디스패치 형식으로 정리해서 제안
+- CEO 결정사항은 `decisions.md`에 자동 기록
+
+### 2️⃣ 디스패치 모드
+`---BE---` / `---FE---` / `---AI---` 섹션 포함 → 각 에이전트에 **병렬 실행**.
+
+```
+로비에 채팅 기능 추가
+
+---BE---
+WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
+
+---FE---
+로비 화면에 채팅 위젯 추가, STOMP 구독
+
+---AI---
+(필요 없으면 이 섹션 생략)
+```
+
+### 🤖 반응 재디스패치
+기존 메시지에 🤖 반응을 추가하면 **재디스패치** (지시문 수정 후 재실행 가능).
+
+---
+
+## `#⚡-dev` — 통합 개발 에이전트
+
+채널에 메시지를 보내면 **스레드 생성 + Claude CLI 자동 실행**된다.
+
+### 동작 방식
+
+```
+사용자 메시지 → 봇이 ⏳ 반응
+  → 스레드 생성 (메시지 첫 80자가 제목)
+  → claude --print --dangerously-skip-permissions 실행
+    (cwd: CLAUDE_PROJECT_DIR, 통합 dev 컨텍스트 + memory-bank 자동 주입)
+  → 스레드에 진행 상황 스트리밍
+  → 완료 시 결과 Embed + ✅ 반응
+  → docs/CHANGELOG.md, .ops/context.jsonl 자동 갱신
+  → memory-bank/activeContext.md, progress.md 갱신 (Claude가 직접)
+```
+
+### 작업 영역
+- 게임 서버: `game_project_server/` (Spring Boot 3, MariaDB, Redis, RabbitMQ, WebSocket/STOMP)
+- Flutter 앱: `game_project_app/` / `game_project_web/`
+- AI 서버: `game_project_ai/` (Gemini)
+
+### 후속 지시 (스레드 follow-up)
+스레드 안에서 추가 메시지 → **이전 대화 컨텍스트 자동 포함**. "아까 그거", "위에서 말한 것" 같은 참조 동작.
+
+---
+
+## HTTP Interaction 서버
+
+봇은 Gateway 연결 외에 HTTP 서버(포트 4040)도 운영.
+
+| 엔드포인트 | 용도 |
+|---|---|
+| `GET /` | 헬스체크 |
+| `GET /health` | 상세 헬스체크 (uptime) |
+| `POST /interaction` | Cloudflare Worker → 봇 명령 포워딩 (현재 미사용) |
+
+현재는 **Gateway 전용** (맥북 직통). Discord Interactions Endpoint URL 비워둠.
+
+---
+
+## 환경 변수
+
+`.env` 파일 위치: `project-manager/.env`
+
+| 변수 | 필수 | 설명 | 기본값 |
+|---|---|---|---|
+| `DISCORD_TOKEN` | O | Bot Token | - |
+| `DISCORD_CLIENT_ID` | O | Application ID | - |
+| `DISCORD_PUBLIC_KEY` | - | Interaction 서명 검증용 | - |
+| `DISCORD_GUILD_ID` | - | 특정 서버 등록 | 전역 |
+| `CEO_CHANNEL_NAME` | - | CEO 채널명 | `👔-ceo기획실` |
+| `CLAUDE_PROJECT_DIR` | - | Claude 작업 디렉터리 | `whosbuying/` |
+| `GAME_SERVER_URL` | - | 게임 서버 주소 | `http://localhost:8080` |
+| `ADMIN_API_KEY` | - | Bearer 토큰 | - |
+| `GITHUB_PAT` | - | Actions write PAT | - |
+| `GITHUB_REPO` | - | 배포 대상 레포 | `subo-9439/whosbuying` |
+| `BOT_HTTP_PORT` | - | HTTP 포트 | `4040` |
+| `GATEWAY_INTERNAL_URL` | - | 게이트웨이 내부 주소 | `http://127.0.0.1:4000` |
+| `PUBLIC_BASE_URL` | - | 공개 URL (SSO 링크 생성) | `https://admin.nolza.org` |
+| `GATEWAY_SSO_SECRET` | - | 게이트웨이↔봇 공유 시크릿 | - |
+
+---
+
+## 메모리 시스템 (5-Layer, Cline Memory-Bank 패턴)
+
+매번 Claude CLI를 새 프로세스로 실행하므로, 5계층으로 세션 연속성과 공용 상태를 유지.
+
+### L0 — CLAUDE.md (정적 헌장)
+`whosbuying/CLAUDE.md` — Claude CLI가 `cwd`에서 자동 로드.
+
+### L1 — Memory-Bank (🔥 공용 상태)
+`whosbuying/docs/memory-bank/` 의 4개 파일 — **모든 에이전트(CEO + Dev) 공용 화이트보드**.
+
+| 파일 | 내용 | 갱신 주체 |
+|------|------|-----------|
+| `activeContext.md` | 🔥 현재 포커스, 최근 변경, 다음 단계 | Dev, CEO |
+| `progress.md` | 기능별 완료 상태, 알려진 이슈 | Dev |
+| `decisions.md` | CEO 합의 결정사항 (append-only) | CEO |
+| `systemPatterns.md` | 재사용 코드 패턴, 명명 규칙 | Dev |
+
+**원칙** (에이전트 프롬프트로 강제):
+> "모든 작업 전 memory-bank 4파일을 반드시 읽는다. 이는 선택이 아니다."
+
+자동 주입(`readMemoryBank()`) + Claude가 도구로도 읽음 (벨트+멜빵).
+
+### L2 — Ops Context Log
+`whosbuying/.ops/context.jsonl` — 작업 결과 JSON 라인 자동 기록. 다음 실행 시 **최근 10건** 주입.
+
+```
+[04-13 14:30] ⚡ 개발: /admin/status API 추가 [AdminController.java]
+  → AdminController 생성, GET /api/v1/admin/status 구현
+```
+
+`.gitignore` 됨 (로컬 전용).
+
+### L3 — Thread Context
+스레드 follow-up 시 Discord API로 **최근 15개 메시지** 수집해 주입.
+
+### L4 — CHANGELOG.md
+`whosbuying/docs/CHANGELOG.md` — 인간 가독 영구 기록. 자동 주입은 안 함.
+
+### 주입 순서
+```
+[역할 prefix]
++ L1: memory-bank 4파일
++ L2: ops log 최근 10건
++ L3: 스레드 히스토리
++ [사용자 지시]
+```
+
+---
+
+## 위키 접근
+
+`#⚡-dev`, `#👔-ceo기획실` 채널에서 `/docs` 입력:
+- 봇이 게이트웨이에서 SSO 토큰 발급
+- 자동 로그인 링크 embed 표시 (5분 일회용)
+- 클릭 시 `https://admin.nolza.org/admin/wiki` 즉시 진입
+
+직접 접속 (브라우저): `https://admin.nolza.org/admin/wiki` → admin / password

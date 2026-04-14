@@ -1,0 +1,15 @@
+{
+  "name": "docs-wiki",
+  "version": "1.0.0",
+  "description": "whosbuying 프로젝트 문서 위키",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "marked": "^15.0.0",
+    "marked-highlight": "^2.2.1",
+    "highlight.js": "^11.10.0"
+  }
+}

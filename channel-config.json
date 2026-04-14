@@ -1,0 +1,21 @@
+{
+  "$comment": "채널/역할별 Claude 모델 설정. 이 파일을 수정하면 봇 재시작 없이 다음 실행부터 적용됨.",
+  "$models": {
+    "opus": "claude-opus-4-6 — 가장 강력, 느리고 비쌈. 복잡한 코드/설계",
+    "sonnet": "claude-sonnet-4-6 — 균형, 빠르고 정확. 일반 작업",
+    "haiku": "claude-haiku-4-5 — 빠르고 저렴. 간단한 질답"
+  },
+
+  "defaults": {
+    "model": "sonnet"
+  },
+
+  "roles": {
+    "dev":          { "model": "opus",   "note": "통합 개발 — 코드 작성, 리팩터링. 무겁게" },
+    "ceo":          { "model": "sonnet", "note": "기획 어드바이저 — 논의/판단" },
+    "backend-dev":  { "model": "opus",   "note": "디스패치 BE — Spring Boot 작업" },
+    "frontend-dev": { "model": "opus",   "note": "디스패치 FE — Flutter 작업" },
+    "ai-dev":       { "model": "opus",   "note": "디스패치 AI — 프롬프트/모델 작업" },
+    "잡담":         { "model": "haiku",  "note": "범용 채널 — 가벼운 대화" }
+  }
+}

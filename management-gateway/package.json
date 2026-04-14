@@ -1,0 +1,14 @@
+{
+  "name": "management-gateway",
+  "version": "1.0.0",
+  "description": "운영 관리 게이트웨이 (인증 + 위키/대시보드 프록시)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.3",
+    "cookie-parser": "^1.4.7"
+  }
+}
