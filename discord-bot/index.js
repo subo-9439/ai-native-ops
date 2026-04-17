@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
+const { startAlertsWatcher } = require('./alerts-watcher');
 const statusCmd   = require('./commands/status');
 const roomsCmd    = require('./commands/rooms');
 const closeRoomCmd = require('./commands/close-room');
@@ -52,10 +53,17 @@ const DISPATCH_CHANNELS = new Set([CEO_CHANNEL]);
 const TRIGGER_EMOJI = '🤖';
 
 // ─── 봇 준비 ─────────────────────────────────────────────
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`[Bot] 로그인 완료: ${client.user.tag}`);
   console.log(`[Bot] 에이전트 채널: ${[...AGENT_CHANNELS.keys()].map(c => '#' + c).join(', ')}`);
   console.log(`[Bot] CEO 기획실: #${CEO_CHANNEL} (메시지 전송 또는 ${TRIGGER_EMOJI} 반응 시 병렬 dispatch)`);
+
+  // docker health_status → #alerts 푸시 watcher (실패해도 봇은 계속 동작)
+  try {
+    await startAlertsWatcher(client);
+  } catch (err) {
+    console.error('[Bot] alerts-watcher 시작 실패:', err.message);
+  }
 });
 
 /**
@@ -112,6 +120,54 @@ client.on('interactionCreate', async (interaction) => {
 // ─── 에이전트 채널: 메시지 → 스레드 생성 + Claude 실행 ──
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // 스레드 내 !닫기 → 즉시 아카이브
+  if (message.content.trim() === '!닫기' && message.channel.isThread()) {
+    try {
+      await message.react('✅');
+      await message.channel.setArchived(true);
+    } catch (err) {
+      console.error('[Bot] 스레드 닫기 오류:', err);
+      await message.reply(`❌ 스레드 닫기 실패: ${err.message}`);
+    }
+    return;
+  }
+
+  // !봇가이드 → 채널에 공지용 가이드 메시지 게시 (고정 권장)
+  if (message.content.trim() === '!봇가이드') {
+    const guide = [
+      '📌 **누가살래 봇 사용 가이드**',
+      '',
+      '**슬래시 커맨드** (어디서나 `/` 입력 후 선택)',
+      '`/game-server-status` — 서버 상태 확인',
+      '`/game-rooms` — 현재 활성 방 목록',
+      '`/close-room` — 특정 방 강제 종료',
+      '`/deploy` — 서버 배포 트리거',
+      '`/dev` — 개발 에이전트에게 직접 지시',
+      '`/docs` — 프로젝트 문서 조회',
+      '',
+      '**채널별 메시지 전송**',
+      '`#⚡-dev` — 메시지 전송 → 개발 에이전트가 자동 응답 (스레드 생성)',
+      '`#💬-잡담` — 일반 대화',
+      '`#👔-ceo기획실` — 기획 논의 또는 `---BE---/---FE---/---AI---` 포함 시 에이전트 병렬 디스패치',
+      '',
+      '**스레드 안에서**',
+      '`!닫기` — 현재 스레드 닫기 (아카이브)',
+      '메시지 계속 입력 → 이전 대화 맥락 유지하며 에이전트 응답',
+      '',
+      '**반응**',
+      '`🤖` 반응 (CEO 기획실 메시지에) → 에이전트 디스패치 재실행',
+    ].join('\n');
+    try {
+      const posted = await message.channel.send(guide);
+      await posted.pin().catch(() => {}); // 권한 있으면 자동 고정
+      await message.react('📌');
+    } catch (err) {
+      await message.reply(`❌ 가이드 게시 실패: ${err.message}`);
+    }
+    return;
+  }
+
   if (message.content.startsWith('/')) return;
 
   const channelName = message.channel.name;
