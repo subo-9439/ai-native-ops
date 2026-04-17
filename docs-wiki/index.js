@@ -168,6 +168,42 @@ function renderPage(body, title = '문서 위키') {
   .card h3 { font-size: 14px; margin-bottom: 6px; }
   .card .card-meta { font-size: 11px; color: var(--muted); }
 
+  /* 달력 */
+  .month-count { display: inline-block; margin-left: 8px; padding: 2px 8px;
+                 font-size: 11px; background: var(--surface); border-radius: 10px;
+                 color: var(--accent); font-weight: normal; vertical-align: middle; }
+  .calendar { margin-top: 24px; }
+  .cal-header { display: flex; align-items: center; justify-content: space-between;
+                margin-bottom: 16px; gap: 12px; }
+  .cal-title { font-size: 20px; margin: 0; flex: 1; text-align: center; }
+  .cal-nav { padding: 6px 14px; background: var(--surface); border: 1px solid var(--border);
+             border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13px; }
+  .cal-nav:hover:not(.disabled) { border-color: var(--accent); color: var(--accent); }
+  .cal-nav.disabled { color: var(--muted); opacity: 0.4; cursor: default; }
+  .cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+                  margin-bottom: 4px; }
+  .cal-weekday { padding: 8px; text-align: center; font-size: 12px;
+                 color: var(--muted); font-weight: 600;
+                 background: var(--surface); border-radius: 6px; }
+  .cal-weekday.sun { color: #f85149; }
+  .cal-weekday.sat { color: #58a6ff; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-cell { min-height: 100px; background: var(--surface); border: 1px solid var(--border);
+              border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 3px;
+              overflow: hidden; }
+  .cal-cell.empty { background: transparent; border: 1px dashed var(--border); opacity: 0.3; }
+  .cal-cell.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .cal-day { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .cal-cell.sun .cal-day { color: #f85149; }
+  .cal-cell.sat .cal-day { color: #58a6ff; }
+  .cal-doc { display: block; padding: 4px 6px; background: var(--bg);
+             border-radius: 4px; font-size: 11px; color: var(--text);
+             text-decoration: none; white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; border-left: 2px solid var(--accent); }
+  .cal-doc:hover { background: rgba(88,166,255,0.15); }
+  .cal-doc-cat { display: block; color: var(--muted); font-size: 9px;
+                 text-transform: uppercase; margin-bottom: 1px; }
+
   /* 탭 */
   .tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
   .tab { padding: 6px 14px; border-radius: 16px; font-size: 13px; cursor: pointer;
@@ -242,15 +278,102 @@ app.get('/', (req, res) => {
     `<a class="tab${c === cat ? ' active' : ''}" href="${base}/?cat=${encodeURIComponent(c)}&sort=${sort}">${c === 'all' ? '전체' : c}</a>`
   ).join('');
   const sortTabs = `<a class="tab${sort === 'date' ? ' active' : ''}" href="${base}/?cat=${cat}&sort=date">최신순</a>
-    <a class="tab${sort === 'name' ? ' active' : ''}" href="${base}/?cat=${cat}&sort=name">이름순</a>`;
+    <a class="tab${sort === 'name' ? ' active' : ''}" href="${base}/?cat=${cat}&sort=name">이름순</a>
+    <a class="tab${sort === 'month' ? ' active' : ''}" href="${base}/?cat=${cat}&sort=month">월별</a>`;
 
-  const cards = sorted.map(d => {
+  const card = (d) => {
     const date = d.mtime.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' });
     return `<a class="card" href="${base}/doc/${d.slug}">
       <h3>${d.title}</h3>
       <div class="card-meta"><span class="badge">${d.categoryLabel}</span> ${date}</div>
     </a>`;
-  }).join('');
+  };
+
+  // 월별 달력 뷰 (기본: 가장 최근 문서가 있는 월)
+  let content;
+  if (sort === 'month') {
+    // 문서가 존재하는 모든 YYYY-MM 수집
+    const monthsWithDocs = new Set();
+    for (const d of filtered) {
+      monthsWithDocs.add(`${d.mtime.getFullYear()}-${String(d.mtime.getMonth() + 1).padStart(2, '0')}`);
+    }
+    const allMonths = [...monthsWithDocs].sort((a, b) => b.localeCompare(a));
+
+    // 선택된 월 (쿼리 파라미터 ym 또는 최신)
+    const selectedYm = req.query.ym || allMonths[0] || (() => {
+      const n = new Date();
+      return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
+    })();
+    const [selY, selM] = selectedYm.split('-').map(Number);
+
+    // 해당 월의 날짜별 문서 그룹핑
+    const byDate = new Map(); // day(1~31) → docs[]
+    for (const d of filtered) {
+      if (d.mtime.getFullYear() === selY && d.mtime.getMonth() + 1 === selM) {
+        const day = d.mtime.getDate();
+        if (!byDate.has(day)) byDate.set(day, []);
+        byDate.get(day).push(d);
+      }
+    }
+
+    // 달력 그리드 계산
+    const firstDay = new Date(selY, selM - 1, 1).getDay(); // 0=일요일
+    const daysInMonth = new Date(selY, selM, 0).getDate();
+    const totalCells = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+
+    const today = new Date();
+    const isToday = (day) =>
+      today.getFullYear() === selY && today.getMonth() + 1 === selM && today.getDate() === day;
+
+    // 이전/다음 월 네비 (문서 있는 월만 이동)
+    const currentIdx = allMonths.indexOf(selectedYm);
+    const prevYm = currentIdx >= 0 && currentIdx < allMonths.length - 1 ? allMonths[currentIdx + 1] : null;
+    const nextYm = currentIdx > 0 ? allMonths[currentIdx - 1] : null;
+    const navLink = (ym, label) => ym
+      ? `<a class="cal-nav" href="${base}/?cat=${cat}&sort=month&ym=${ym}">${label}</a>`
+      : `<span class="cal-nav disabled">${label}</span>`;
+
+    // 셀 렌더링
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    const headerRow = weekdays.map((w, i) =>
+      `<div class="cal-weekday${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}">${w}</div>`
+    ).join('');
+
+    const cells = [];
+    for (let i = 0; i < totalCells; i++) {
+      const day = i - firstDay + 1;
+      if (day < 1 || day > daysInMonth) {
+        cells.push(`<div class="cal-cell empty"></div>`);
+      } else {
+        const dayDocs = byDate.get(day) || [];
+        const dowClass = i % 7 === 0 ? ' sun' : i % 7 === 6 ? ' sat' : '';
+        const todayClass = isToday(day) ? ' today' : '';
+        const docsHtml = dayDocs.map(d =>
+          `<a class="cal-doc" href="${base}/doc/${d.slug}" title="${d.title}">
+            <span class="cal-doc-cat">${d.categoryLabel}</span>${d.title}
+          </a>`
+        ).join('');
+        cells.push(`<div class="cal-cell${dowClass}${todayClass}">
+          <div class="cal-day">${day}</div>
+          ${docsHtml}
+        </div>`);
+      }
+    }
+
+    const monthTotal = [...byDate.values()].reduce((sum, arr) => sum + arr.length, 0);
+
+    content = `<div class="calendar">
+      <div class="cal-header">
+        ${navLink(prevYm, '← 이전 월')}
+        <h2 class="cal-title">${selY}년 ${selM}월 <span class="month-count">${monthTotal}개</span></h2>
+        ${navLink(nextYm, '다음 월 →')}
+      </div>
+      <div class="cal-weekdays">${headerRow}</div>
+      <div class="cal-grid">${cells.join('')}</div>
+    </div>`;
+  } else {
+    content = `<div class="cards">${sorted.map(card).join('')}</div>`;
+  }
 
   const body = `${buildSidebar(docs, null, base)}
   <div class="main">
@@ -258,7 +381,7 @@ app.get('/', (req, res) => {
     <div class="meta"><span>${docs.length}개 문서</span></div>
     <div class="tabs">${tabs}</div>
     <div class="tabs">${sortTabs}</div>
-    <div class="cards">${cards}</div>
+    ${content}
   </div>`;
 
   res.send(renderPage(body));
