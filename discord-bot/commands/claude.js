@@ -4,6 +4,7 @@ const path = require('path');
 const { EmbedBuilder } = require('discord.js');
 const { buildFullPrompt, writeOpsLog, extractSummary, extractChangedFiles } = require('../context-manager');
 const { appendChangelog } = require('../changelog-manager');
+const { validateUserMessage } = require('../pre-tool-gate');
 
 const MAX_LEN = 1900;
 const STREAM_INTERVAL_MS = 4000;
@@ -127,6 +128,7 @@ CEO와 프로젝트 방향, 기능 기획, 우선순위를 논의합니다.
 - 필요하면 대안을 제시한다.
 - 합의된 작업은 디스패치 형식(---BE---/---FE---/---AI---)으로 정리하여 제안한다.
 - 답변은 한글, 간결하게.
+- Discord 포맷 필수: ##, ###, --- 사용 금지. 제목은 **굵게**, 구분은 빈 줄로만 표현한다.
 
 [CEO 지시]
 `,
@@ -216,11 +218,11 @@ function resolveTargets(sections) {
 function buildResultEmbed(channelName, label, buffer, timedOut) {
   const hasError = buffer.includes('Error') || buffer.includes('[err]');
   const status = timedOut ? '⏰ 타임아웃' : (hasError ? '⚠️ 완료(오류 포함)' : '✅ 완료');
-  const preview = (buffer.slice(-1400) || '(출력 없음)').replace(/`/g, "'");
+  const preview = buffer.slice(-1400) || '(출력 없음)';
 
   return new EmbedBuilder()
     .setTitle(`${label} — ${status}`)
-    .setDescription(`\`\`\`\n${preview}\n\`\`\``)
+    .setDescription(preview)
     .setColor(CHANNEL_COLORS[channelName] || 0x99AAB5)
     .setTimestamp();
 }
@@ -231,6 +233,19 @@ function buildResultEmbed(channelName, label, buffer, timedOut) {
  * @returns Promise<{ channelName, label, buffer, timedOut }>
  */
 async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
+  // ── 메시지 정책 검증 (HG001/HG002) ──
+  const validation = validateUserMessage(userMessage);
+  if (validation.decision === 'deny') {
+    const label = CHANNEL_LABELS[channelName] || channelName;
+    const embed = new EmbedBuilder()
+      .setTitle(`${label} — ❌ 차단됨`)
+      .setDescription(`**정책 위반**: ${validation.reason}`)
+      .setColor(0xFF0000)
+      .setTimestamp();
+    await thread.send({ embeds: [embed] });
+    return { channelName, label, buffer: validation.reason, timedOut: false };
+  }
+
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) throw new Error('CLAUDE_PROJECT_DIR 환경변수 없음');
 
@@ -250,9 +265,9 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
   let lastUpdate = Date.now();
 
   const flushStatus = async () => {
-    const preview = buffer.slice(-1200).replace(/`/g, "'");
+    const preview = buffer.slice(-1200);
     try {
-      await statusMsg.edit(`⏳ **${label}** 진행 중...${modelTag}\n\`\`\`\n${preview}\n\`\`\``);
+      await statusMsg.edit(`⏳ **${label}** 진행 중...${modelTag}\n${preview}`);
     } catch (_) {}
   };
 
@@ -310,6 +325,17 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
  * 기존 채널 직접 메시지용 (에이전트 채널 messageCreate)
  */
 async function runClaude(interaction, userMessage, opts = {}) {
+  // ── 메시지 정책 검증 (HG001/HG002) ──
+  const validation = validateUserMessage(userMessage);
+  if (validation.decision === 'deny') {
+    await interaction.editReply(
+      `❌ **정책 위반**: ${validation.reason}\n\n` +
+      `**이유**: 민감한 경로나 파괴 명령은 Discord 봇을 통해 실행할 수 없습니다.\n` +
+      `로컬 개발 환경에서 직접 실행하거나, CEO 기획실의 승인이 필요합니다.`
+    );
+    return;
+  }
+
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) {
     await interaction.editReply('`CLAUDE_PROJECT_DIR` 환경변수가 없습니다.');
@@ -334,7 +360,7 @@ async function runClaude(interaction, userMessage, opts = {}) {
     if (!buffer.trim() && !final) return;
     const status = final ? (buffer.includes('Error') ? '⚠️ 완료(오류 포함)' : '✅ 완료') : '⏳ 진행 중...';
     const preview = buffer.slice(-MAX_LEN + 80);
-    const content = `${title}${status}${roleLabel}\n\`\`\`\n${preview}\n\`\`\``;
+    const content = `${title}${status}${roleLabel}\n${preview}`;
     try {
       await interaction.editReply(content);
     } catch (_) {}
