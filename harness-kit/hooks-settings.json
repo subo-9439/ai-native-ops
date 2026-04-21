@@ -1,0 +1,61 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/pre_tool_gate.py", "timeout": 5000 },
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 }
+      ]
+    }
+  ],
+  "PostToolUseFailure": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 }
+      ]
+    }
+  ],
+  "PreCompact": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 }
+      ]
+    }
+  ],
+  "PostCompact": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/reinject_after_compaction.py", "timeout": 5000 }
+      ]
+    }
+  ],
+  "ConfigChange": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/audit_config_change.py", "timeout": 3000 },
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "python3 .claude/hooks/event_logger.py", "timeout": 3000 },
+        { "type": "command", "command": "python3 .claude/hooks/reinject_after_compaction.py", "timeout": 5000 }
+      ]
+    }
+  ]
+}

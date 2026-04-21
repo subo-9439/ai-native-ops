@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whosbuying.local/harness/schemas/event.schema.json",
+  "title": "Harness Event",
+  "description": "Claude Code hook 이벤트 로그 스키마",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "스키마 버전 (semver)"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "이벤트 고유 ID (UUID v4)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "이벤트 발생 시각 (ISO 8601 UTC)"
+    },
+    "source": {
+      "type": "string",
+      "description": "이벤트 소스 식별자"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Claude Code 세션 ID"
+    },
+    "cwd": {
+      "type": "string",
+      "description": "현재 작업 디렉토리"
+    },
+    "hook_event_name": {
+      "type": "string",
+      "enum": [
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "ConfigChange",
+        "PreCompact",
+        "PostCompact",
+        "SessionStart",
+        "unknown"
+      ],
+      "description": "hook 이벤트 이름"
+    },
+    "tool_name": {
+      "type": "string",
+      "description": "호출된 도구 이름"
+    },
+    "tool_input": {
+      "type": "object",
+      "description": "도구 입력 데이터"
+    },
+    "payload_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "원본 페이로드의 SHA-256 앞 16자"
+    },
+    "raw": {
+      "type": "object",
+      "description": "원본 hook 이벤트 데이터"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp",
+    "source",
+    "session_id",
+    "hook_event_name",
+    "tool_name",
+    "payload_hash"
+  ],
+  "additionalProperties": false
+}

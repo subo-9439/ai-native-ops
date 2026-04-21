@@ -1,0 +1,87 @@
+# hr_meta_evaluation_replay.yaml — 메타 평가 및 리플레이 골격
+
+version: "1.0.0"
+
+description: |
+  주간 또는 릴리즈 전 replay/metrics 평가 골격.
+  metric blindness를 방지하고 regression을 감지한다.
+
+schedule:
+  periodic: "주 1회 (월요일) 또는 릴리즈 전"
+  trigger: "수동 요청: '하네스 메타 평가 실행'"
+
+evaluation_dimensions:
+  - id: ME-01
+    name: "Gate 효과성"
+    description: "deny/allow 비율로 gate가 유효한지 평가"
+    metrics:
+      - total_events
+      - deny_count
+      - allow_count
+      - deny_rate_percent
+    regression_signal: "deny_rate가 전주 대비 50% 이상 감소하면 gate 우회 의심"
+
+  - id: ME-02
+    name: "Ghost Symbol 발생률"
+    description: "증거 없는 제안이 얼마나 발생했는지"
+    metrics:
+      - proposals_total
+      - evidence_checked_count
+      - evidence_missing_count
+    regression_signal: "evidence_missing_count가 증가 추세이면 evidence-gate 강화 필요"
+
+  - id: ME-03
+    name: "승인 없는 적용 시도"
+    description: "confirmation-gate를 우회하려는 시도"
+    metrics:
+      - direct_apply_attempts
+      - approved_before_apply_count
+    regression_signal: "direct_apply_attempts > 0이면 gate 위반"
+
+  - id: ME-04
+    name: "Degraded 모드 빈도"
+    description: "degraded 모드가 얼마나 자주 발생하는지"
+    metrics:
+      - degraded_sessions
+      - total_sessions
+      - degraded_rate_percent
+    regression_signal: "degraded_rate > 30%이면 인프라 점검 필요"
+
+  - id: ME-05
+    name: "Compaction 건강도"
+    description: "메모리 관리가 적절히 수행되는지"
+    metrics:
+      - raw_file_size_mb
+      - raw_line_count
+      - last_compaction_date
+      - days_since_compaction
+    regression_signal: "days_since_compaction > 14이면 compaction 필요"
+
+replay_procedure:
+  steps:
+    - step: 1
+      action: "raw/events.jsonl에서 최근 기간 이벤트 로드"
+    - step: 2
+      action: "evaluation_dimensions별 metrics 계산"
+    - step: 3
+      action: "regression_signal 조건 체크"
+    - step: 4
+      action: "결과를 reports/에 기록"
+    - step: 5
+      action: "regression 감지 시 alert 항목 생성"
+
+metric_blindness_prevention:
+  - "단일 metric만으로 판단하지 않는다. 최소 2개 dimension을 교차 확인한다."
+  - "deny_count=0이 반드시 좋은 것은 아니다 (gate가 동작하지 않을 수 있음)."
+  - "allow_count가 비정상적으로 높으면 gate 우회 의심."
+  - "degraded_mode 세션에서 발생한 이벤트는 별도 집계한다."
+
+output:
+  format: "markdown report in .agent/harness/reports/"
+  fields:
+    - evaluation_date
+    - period_start
+    - period_end
+    - dimensions_evaluated
+    - regressions_detected
+    - recommendations

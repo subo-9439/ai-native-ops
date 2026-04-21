@@ -134,6 +134,7 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 | `DISCORD_CLIENT_ID` | O | Application ID | - |
 | `DISCORD_PUBLIC_KEY` | - | Interaction 서명 검증용 | - |
 | `DISCORD_GUILD_ID` | - | 특정 서버 등록 | 전역 |
+| `DISCORD_ALERTS_WEBHOOK` | - | `#🚨-alerts` 배포 알림 웹훅 (deploy-web.sh가 참조) | `~/.claude-sync/discord-alerts-webhook` 파일 |
 | `CEO_CHANNEL_NAME` | - | CEO 채널명 | `👔-ceo기획실` |
 | `CLAUDE_PROJECT_DIR` | - | Claude 작업 디렉터리 | `whosbuying/` |
 | `GAME_SERVER_URL` | - | 게임 서버 주소 | `http://localhost:8080` |
@@ -169,15 +170,22 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 
 자동 주입(`readMemoryBank()`) + Claude가 도구로도 읽음 (벨트+멜빵).
 
-### L2 — Ops Context Log
-`whosbuying/.ops/context.jsonl` — 작업 결과 JSON 라인 자동 기록. 다음 실행 시 **최근 10건** 주입.
+### L2 — Ops Context Log (claude-sync)
+`~/.claude-sync/<slug>/events.jsonl` — **claude-sync 공용 이벤트 로그**. 다음 실행 시 **최근 20건** 주입.
 
-```
-[04-13 14:30] ⚡ 개발: /admin/status API 추가 [AdminController.java]
-  → AdminController 생성, GET /api/v1/admin/status 구현
+> 기존 `whosbuying/.ops/context.jsonl` 방식에서 마이그레이션 완료 (2026-04-18).  
+> 원본은 `.ops/context.jsonl.pre-sync-backup`으로 보존.
+
+```jsonl
+{"ts":"2026-04-18T08:00:00Z","source":"terminal","agent":"dev","kind":"file_write","summary":"AdminController 생성, GET /api/v1/admin/status 구현","artifacts":[{"type":"file","path":"game_project_server/src/.../AdminController.java"}],"tokens":null}
 ```
 
-`.gitignore` 됨 (로컬 전용).
+**양방향 sync (터미널 Claude Code 훅)**:
+- **터미널 → 로그**: 세션 종료 시 Stop Hook(`~/.claude/hooks/stop`)이 자동으로 `events.jsonl`에 `session_end` 이벤트 기록
+- **Discord → 로그**: 봇 슬래시 커맨드 실행 시 `events.jsonl`에 이벤트 append
+- **조회**: Discord에서 `/sync-recent`로 최근 20건 다이제스트 확인 가능
+
+`.gitignore` 됨 (로컬 전용). 참고: [`~/.claude-sync/README.md`](~/.claude-sync/README.md)
 
 ### L3 — Thread Context
 스레드 follow-up 시 Discord API로 **최근 15개 메시지** 수집해 주입.
@@ -189,7 +197,7 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 ```
 [역할 prefix]
 + L1: memory-bank 4파일
-+ L2: ops log 최근 10건
++ L2: claude-sync events.jsonl 최근 20건
 + L3: 스레드 히스토리
 + [사용자 지시]
 ```

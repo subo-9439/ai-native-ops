@@ -5,6 +5,23 @@ const { EmbedBuilder } = require('discord.js');
 const { buildFullPrompt, writeOpsLog, extractSummary, extractChangedFiles } = require('../context-manager');
 const { appendChangelog } = require('../changelog-manager');
 const { validateUserMessage } = require('../pre-tool-gate');
+const { loadQueue, queueSummary: getQueueSummary } = require('../work-queue');
+const { recordDiscordEvent, readRecentContext } = require('../sync-writer');
+
+/**
+ * channelName(claude.js 내부 키) → claude-sync agent (ceo|dev|be|fe|ai|user)
+ */
+function toSyncAgent(channelName) {
+  switch (channelName) {
+    case 'ceo':           return 'ceo';
+    case 'backend-dev':   return 'be';
+    case 'frontend-dev':  return 'fe';
+    case 'ai-dev':        return 'ai';
+    case 'dev':
+    case '잡담':
+    default:              return 'dev';
+  }
+}
 
 const MAX_LEN = 1900;
 const STREAM_INTERVAL_MS = 4000;
@@ -82,6 +99,20 @@ const DEV_CONTEXT = `[역할: whosbuying 통합 개발 에이전트]
 - docs/INFRASTRUCTURE.md
 - docs/CHANGELOG.md (최근 변경 확인용)
 
+[Flutter UI/UX 품질 게이트 — FE 작업 시 필수]
+Flutter 코드(game_project_app/, game_project_web/)를 수정할 때 반드시 적용한다:
+
+1. 작업 시작 전 docs/DESIGN_SYSTEM.md를 읽는다.
+2. 색상/타이포/스페이싱은 DesignTokens 상수만 사용. Color(0xFF...) 리터럴, 숫자 fontSize, 직접 EdgeInsets 금지.
+3. 기존 공통 위젯(AppButton, AppSnackBar, EmptyStateView 등)을 먼저 확인하고 재사용.
+4. 화면 진입 애니메이션(FadeTransition+SlideTransition 200~300ms), 버튼 피드백(AnimatedContainer 150ms), 로딩(Shimmer) 적용.
+5. 빈 상태/에러 상태 화면 반드시 구현.
+6. 시각적 계층: displaySmall(제목) → headlineMedium(섹션) → bodyMedium(본문) → labelMedium(캡션).
+7. 섹션 간격 spacing6(24px) 이상, 화면 가장자리 spacing4(16px) 이상.
+8. 게임 화면은 ladder_neon_tokens.dart 네온 테마 사용.
+
+이 규칙은 BE 전용 작업에는 적용하지 않는다. Flutter 파일을 한 줄이라도 건드리면 적용한다.
+
 [실행 원칙]
 - 확인 질문 없이 즉시 작업을 수행한다.
 - "수정할까요?"라고 묻지 말고 바로 수정한다.
@@ -94,9 +125,50 @@ const AGENT_CONTEXTS = {
   'dev':          DEV_CONTEXT,
   '잡담':         DEV_CONTEXT,
   // 디스패치 섹션 — 컨텍스트는 동일, 작업 영역만 명시
-  'backend-dev':  DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: 백엔드 game_project_server/]\n\n[작업 지시]'),
-  'frontend-dev': DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: 프론트엔드 game_project_app/, game_project_web/]\n\n[작업 지시]'),
-  'ai-dev':       DEV_CONTEXT.replace('[작업 지시]', '[이번 작업 영역: AI 서버 game_project_ai/]\n\n[작업 지시]'),
+  'backend-dev':  DEV_CONTEXT.replace('[작업 지시]', `[이번 작업 영역: 백엔드 game_project_server/]
+
+[백엔드 품질 기준 — 필수]
+
+1. **패키지 구조**: 도메인별 수직 패키지 (room/, game/, admin/, ai/). 각 도메인 안에 api/, service/, domain/, dto/, repo/, exception/, ws/, event/ 하위 구조.
+2. **API 설계**: REST는 /api/v1/{도메인} 경로. 컨트롤러에 @Tag, @Operation, @ApiResponses Swagger 어노테이션 필수. 요청 DTO에 @Valid 적용.
+3. **응답 래핑**: 컨트롤러는 raw 객체 또는 AppResponse를 반환. ApiResponseAdvice가 자동으로 AppResponse.ok()/okList()/okEmpty()로 래핑한다. ResponseEntity를 직접 쓸 필요 없음.
+4. **에러 응답**: DomainException(errorCode, message, httpStatus)을 상속한 커스텀 예외 사용 (예: RoomNotFoundException, RoomJoinForbiddenException). ApiExceptionHandler가 AppResponse.fail(status, code, message) 형태로 변환.
+5. **에러 코드 관례**: 대문자 스네이크 (GAME_NOT_FOUND, ALREADY_IN_ROOM, INVALID_STATE 등). 프론트엔드가 code 필드로 분기하므로 변경 시 클라이언트 영향 확인.
+6. **게임 상태**: Redis(GameStateStore) + RedisLock으로 관리. 게임별 로직은 GameRoundHandler 인터페이스 구현체 (LadderRoundHandler, BombBoxRoundHandler, LiarGameRoundHandler, BlindBidRoundHandler).
+7. **WebSocket**: STOMP 기반. ws/ 패키지에 컨트롤러, @MessageMapping 사용. RoomEventPublisher로 방/게임 이벤트 브로드캐스트.
+8. **인프라**: MariaDB + Redis + RabbitMQ. docker-compose.yml로 로컬 실행. application.yml 설정 참조.
+9. **커밋 메시지**: 한글 사용, 변경 이유와 내용을 간결하게. memory-bank 갱신을 같은 커밋에 포함.
+
+[작업 지시]`),
+  'frontend-dev': DEV_CONTEXT.replace('[작업 지시]', `[이번 작업 영역: 프론트엔드 game_project_app/, game_project_web/]
+
+[UI/UX 품질 기준 — 필수]
+작업 전 docs/DESIGN_SYSTEM.md를 반드시 읽는다. 이 문서가 UI 구현의 SSOT다.
+
+1. **디자인 토큰 강제**: 색상/타이포/스페이싱은 반드시 DesignTokens 상수만 사용. 하드코딩된 Color(0xFF...), fontSize, EdgeInsets 숫자 리터럴 금지.
+2. **시각적 계층**: 화면에 displaySmall(제목) → headlineMedium(섹션) → bodyMedium(본문) → labelMedium(캡션) 계층이 명확해야 한다.
+3. **여백 설계**: 콘텐츠를 빽빽하게 채우지 않는다. 섹션 간 spacing6(24px) 이상, 화면 가장자리 spacing4(16px) 이상.
+4. **애니메이션**: 화면 진입 시 FadeTransition+SlideTransition(200~300ms), 버튼 피드백 AnimatedContainer(150ms), 로딩 시 Shimmer 적용. 의미 없는 장식 애니메이션 금지.
+5. **컴포넌트 재사용**: AppButton.primary/tonal/outline, AppSnackBar, EmptyStateView 등 기존 공통 위젯을 반드시 먼저 확인하고 사용.
+6. **반응형**: 기본 모바일(360px), 웹은 ConstrainedBox(maxWidth: 600)으로 컨텐츠 제한.
+7. **빈 상태/에러 상태**: 데이터가 없거나 에러일 때의 화면도 반드시 구현. EmptyStateView 패턴 사용.
+8. **게임 화면**: ladder_neon_tokens.dart의 네온 테마 사용. 일반 화면과 시각적으로 구분.
+9. **기존 mockup 참조**: docs/mockups/ 에 HTML 프로토타입이 있다. 새 화면의 시각적 톤을 맞춘다.
+
+[작업 지시]`),
+  'ai-dev':       DEV_CONTEXT.replace('[작업 지시]', `[이번 작업 영역: AI 서버 game_project_ai/]
+
+[AI 서버 품질 기준 — 필수]
+
+1. **구조**: Spring Boot 앱. 패키지는 기능별 (liar/, gemini/, config/). Controller + Service 2계층. 도메인 엔티티/DB 없음 (stateless).
+2. **외부 AI 호출**: GeminiClient (RestClient 기반)로 Gemini REST API 호출. AiProperties (@ConfigurationProperties prefix="ai")로 provider/model/apiKey 관리. 새 AI 기능 추가 시 동일 GeminiClient.generate(prompt) 사용.
+3. **프롬프트 설계**: 프롬프트는 Service 클래스에서 buildPrompt() 메서드로 구성. JSON 배열 응답을 요구하고, 정규식으로 파싱 (JSON_ARRAY_PATTERN). 파싱 실패 시 IllegalStateException.
+4. **에러 처리**: GlobalExceptionHandler가 Map.of("error", message) 형태로 반환 (게임 서버의 AppResponse와 다름). IllegalStateException은 503, 일반 예외는 500.
+5. **DTO**: record 사용 (HintRequest, HintResponse). @Valid + jakarta.validation 적용.
+6. **API 경로**: /ai/{게임명}/{기능} 형태 (예: /ai/liar-game/hints). 게임 서버 /api/v1과 구분된 별도 서버.
+7. **포트**: 게임 서버(8080)와 다른 포트에서 실행. 게임 서버가 AI 서버를 내부 호출.
+
+[작업 지시]`),
 
   'ceo': `[역할: CEO 기획 어드바이저]
 당신은 whosbuying 게임 프로젝트의 기획/전략 어드바이저입니다.
@@ -129,6 +201,28 @@ CEO와 프로젝트 방향, 기능 기획, 우선순위를 논의합니다.
 - 합의된 작업은 디스패치 형식(---BE---/---FE---/---AI---)으로 정리하여 제안한다.
 - 답변은 한글, 간결하게.
 - Discord 포맷 필수: ##, ###, --- 사용 금지. 제목은 **굵게**, 구분은 빈 줄로만 표현한다.
+
+[작업 큐 시스템]
+project-manager/work-queue.json에 순차 디스패치 큐가 있을 수 있다.
+아래 [현재 큐 상태]가 제공되면 이를 인식하라.
+
+🔥 큐 적재의 유일한 방법 (이 규칙을 어기면 사일런트 실패한다):
+- 큐에 아이템을 넣는 유일한 방법은 Bash 툴로 project-manager/work-queue.json을 직접 편집하는 것이다.
+- 채팅 텍스트에 ---BE---/---FE---/---AI--- 블록을 나열하거나 "큐에 적재했다"고 서술하는 것은 **큐 적재가 아니다**.
+- 파일에 append 하지 않고 <<START_QUEUE>> 태그만 붙이면 봇은 pending 0을 감지하고 경고 reply 후 no-op 처리한다.
+- 상세 런북: project-manager/docs/INCIDENT_QUEUE_APPEND_MISSING.md
+
+CEO가 "진행해", "시작해", "ㄱㄱ", "응", "해줘", "돌려", "큐 시작" 등
+작업 진행을 승인/지시하는 의도를 보이면:
+1. [현재 큐 상태]의 pending 수를 먼저 확인한다
+2. pending ≥ 1이면 자연스럽게 큐 진행을 설명하고 마지막에 <<START_QUEUE>> 태그를 붙인다
+3. pending 0이고 CEO가 새 PR을 논의 중이었다면:
+   (a) Bash 툴로 work-queue.json을 편집해 pending 아이템을 append하고,
+   (b) 그 다음에 <<START_QUEUE>> 태그를 붙인다
+   — (a) 없이 (b)만 하면 안 된다.
+4. pending 0이고 새 PR도 없으면 태그를 절대 붙이지 말고 현재 상태를 요약 + 다음 액션(새 아이템 추가/단건 디스패치/재시도)을 제안한다.
+
+단건 PR(1건)은 큐를 우회해 디스패치 채널에 ---BE---/---FE---/---AI--- 블록을 직접 보내는 편이 가장 빠르다. 큐는 2건 이상을 순차 실행할 때만 사용한다.
 
 [CEO 지시]
 `,
@@ -249,16 +343,45 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) throw new Error('CLAUDE_PROJECT_DIR 환경변수 없음');
 
-  const contextPrefix = AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['dev'];
-  const fullMessage = await buildFullPrompt({
+  let contextPrefix = AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['dev'];
+
+  // CEO 역할일 때 큐 상태 동적 주입
+  if (channelName === 'ceo') {
+    const queue = loadQueue();
+    if (queue?.items?.length > 0) {
+      const qStatus = getQueueSummary();
+      contextPrefix = contextPrefix.replace(
+        '[CEO 지시]',
+        `[현재 큐 상태]\n${qStatus}\n\n[CEO 지시]`
+      );
+    }
+  }
+
+  const builtPrompt = await buildFullPrompt({
     projectDir,
     thread: opts.injectThreadContext ? thread : null,
     agentContext: contextPrefix,
     userMessage,
   });
+
+  // claude-sync: 최근 이벤트(터미널+Discord 공유) 주입
+  const syncContext = readRecentContext(20);
+  const fullMessage = syncContext
+    ? builtPrompt.replace('[사용자 지시]', syncContext + '[사용자 지시]')
+    : builtPrompt;
+
   const label = CHANNEL_LABELS[channelName] || channelName;
   const model = getModelForRole(channelName);
   const modelTag = model ? ` · model: ${model}` : '';
+
+  // claude-sync: user_msg 이벤트 기록
+  const syncAgent = toSyncAgent(channelName);
+  const threadId = thread?.id || null;
+  recordDiscordEvent('user_msg', {
+    agent: syncAgent,
+    threadId,
+    summary: userMessage.substring(0, 180),
+  });
 
   const statusMsg = await thread.send(`⏳ **${label}** 작업 시작...${modelTag}`);
   let buffer = '';
@@ -296,6 +419,11 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
 
     const timeout = setTimeout(() => {
       proc.kill();
+      recordDiscordEvent('session_end', {
+        agent: syncAgent,
+        threadId,
+        summary: `${label} 타임아웃 — ${userMessage.substring(0, 80)}`,
+      });
       resolve({ channelName, label, buffer, timedOut: true });
     }, 30 * 60 * 1000);
 
@@ -309,6 +437,20 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
       const files = extractChangedFiles(buffer);
       writeOpsLog(projectDir, { agent: label, task: userMessage.substring(0, 200), summary, files });
       appendChangelog(projectDir, { agent: label, task: userMessage.substring(0, 200), summary, files });
+
+      // claude-sync: assistant_reply + session_end 이벤트 기록
+      recordDiscordEvent('assistant_reply', {
+        agent: syncAgent,
+        threadId,
+        summary: summary.substring(0, 240),
+        artifacts: files,
+      });
+      recordDiscordEvent('session_end', {
+        agent: syncAgent,
+        threadId,
+        summary: `${label} 완료 — ${userMessage.substring(0, 80)}`,
+        artifacts: files,
+      });
 
       resolve({ channelName, label, buffer, timedOut: false });
     });

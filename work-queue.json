@@ -1,0 +1,87 @@
+{
+  "createdAt": "2026-04-18T07:00:00Z",
+  "description": "OPS 큐: kill-switch + Cloudflare /join/* 라우팅",
+  "items": [
+    {
+      "id": "PR-OPS1",
+      "title": "BE kill-switch 서비스 중단 스위치",
+      "agent": "backend-dev",
+      "prompt": "---BE---\nPR-OPS1: 서비스 kill-switch (긴급 서비스 중단 스위치) 구현\n\n1. Redis 기반 kill-switch 플래그 구현 (key: service:kill-switch, value: true/false)\n2. 글로벌 필터/인터셉터에서 kill-switch ON이면 모든 API 요청에 503 응답 + JSON {\"error\":\"SERVICE_MAINTENANCE\",\"message\":\"서비스 점검 중입니다\"}\n3. WebSocket 연결도 차단 (STOMP connect 시 에러 메시지)\n4. kill-switch 제어 admin API: POST /api/v1/admin/kill-switch {enabled: true/false} (기존 admin 인증키 사용)\n5. GET /api/v1/admin/kill-switch 로 현재 상태 조회\n6. /health 엔드포인트는 kill-switch 영향 안 받음 (헬스체크는 항상 통과)\n7. Memory-Bank 갱신",
+      "status": "done",
+      "startedAt": "2026-04-18T06:46:57.325Z",
+      "completedAt": "2026-04-18T06:51:41.845Z"
+    },
+    {
+      "id": "PR-OPS2",
+      "title": "Cloudflare /join/* 라우팅 설정",
+      "agent": "backend-dev",
+      "prompt": "---BE---\nPR-OPS2: Cloudflare Worker/Tunnel에서 nolza.org/join/* 를 백엔드로 라우팅\n\n현재 상태:\n- nolza.org은 Cloudflare 뒤에 있음\n- 백엔드에 JoinOgController가 GET /join/{roomCode} 처리 (OG 메타태그 서빙)\n- Cloudflare Tunnel이 게임 서버로 프록시하고 있음\n\n작업:\n1. project-manager/ 또는 game_project_server/ 에 Cloudflare Worker 스크립트 작성 (wrangler.toml + worker.js)\n2. /join/* 경로 요청을 백엔드 서버의 /join/* 로 프록시 (나머지 경로는 기존 Flutter 웹앱으로)\n3. User-Agent 기반 분기: 크롤러 봇(Discordbot, Slackbot, KakaoTalk 등)은 백엔드로, 일반 유저는 Flutter 웹으로\n4. 기존 wol-service Worker와 충돌 없도록 라우트 분리\n5. 테스트: curl -H 'User-Agent: Discordbot' https://nolza.org/join/ABCDEF → OG 메타 HTML 반환 확인\n6. Memory-Bank 갱신\n7. docs/INFRASTRUCTURE.md 에 Cloudflare 라우팅 구성 추가",
+      "status": "done",
+      "startedAt": "2026-04-18T06:53:11.264Z",
+      "completedAt": "2026-04-18T06:54:22.933Z"
+    },
+    {
+      "id": "PR-FIX1",
+      "title": "방 만들기 화면 CTA 비활성 버그 + 기본 게임 자동 선택",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX1: 랜딩 → 게임시작하기 → 방만들기 진입 시 '방 만들기' CTA가 비활성인 UX 사고 수정\n\n증거 파일:\n- game_project_app/lib/features/room/screens/create_room/create_room_config_screen.dart:43(_gamePlan 빈 초기화), 212(스낵바 분기), 262(canConfirm), 386(_gamePlan.isEmpty 플레이스홀더), 550/666(BottomCta enabled)\n- game_project_app/lib/features/landing/landing_screen.dart (게임시작하기 진입 플로우)\n\n현재 상태:\n- `_gamePlan`이 빈 리스트로 초기화 → `canConfirm = !roomState.loading && _gamePlan.isNotEmpty` → BottomCta `enabled: false` → 버튼 회색으로 안 눌림\n- 사용자가 닉네임 입력하고 '게임시작하기' 눌러 들어와도 막힘 → 즉시 이탈 유발\n\n작업 (1+2+3 전부):\n1. **기본 게임 자동 추가**: `initState()`에서 `_gamePlan.add(RoundGamePlanItem(gameType: implementedGameTypes.first, roundCount: 1, requestTeamSplit: false))` 실행. 들어오자마자 즉시 플레이 가능한 기본 플랜.\n2. **canConfirm 조건은 그대로 유지** (_gamePlan.isNotEmpty). 1번 덕에 기본값 비지 않음.\n3. **BottomCta 라벨 동적**: `_gamePlan.isEmpty`일 때 버튼 라벨을 '게임을 추가해야 시작할 수 있어요'로 교체, enabled=false 유지. `BottomCta` 위젯이 label 파라미터 없다면 추가.\n\n검증 시나리오:\n- A: 랜딩 → 닉네임 → 게임시작하기 → 방만들기 화면 진입 즉시 기본 게임 1개 표시 + CTA 활성.\n- B: 기본 게임을 X로 삭제 → CTA 비활성 + 라벨 '게임을 추가해야 시작할 수 있어요' 노출.\n- C: 다시 게임 추가 → CTA 활성 복귀.\n- `flutter analyze` 기존 5 warning 외 추가 0.\n- `scripts/deploy-web.sh` 빌드 성공 + https://nolza.org Cmd+Shift+R 재검증.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (코드 로직 수정).\n- 하네스 evidence-gate: 모든 심볼/필드 접근은 grep 으로 선언 확인 후 변경.\n- Memory-Bank activeContext.md '현재 포커스' 갱신 + progress.md 진행 기록.\n\n공수: ~25분 (구현 15 + 배포 10)",
+      "status": "done",
+      "startedAt": "2026-04-20T01:38:32.503Z",
+      "completedAt": "2026-04-20T01:42:34.268Z"
+    },
+    {
+      "id": "PR-FIX5",
+      "title": "모바일 웹 방만들기 블랭크 우회 — html 렌더러 전환",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX5: 모바일 브라우저에서 방만들기 진입 시 섹션(게임 선택/요금제)이 렌더되지 않는 블랭크 문제를 Flutter Web 렌더러를 canvaskit → html로 전환해 우회한다.\n\n배경:\n- 현재 nolza.org는 Flutter Web 기본 canvaskit 렌더러 사용.\n- 모바일 Chrome/Safari에서 create_room_config_screen 진입 시 닉네임 상단 영역 아래가 비어 보이는 현상 확인.\n- 캐시 원인은 CEO가 배제 (시크릿 탭도 동일). GameTypeSelector(PageView) 또는 canvaskit 특정 동작의 페인트 차단으로 추정.\n- 우회로서 html 렌더러로 전환하면 모바일에서 렌더링이 안정적이라는 Flutter 커뮤니티/issue 레퍼런스 있음.\n\n작업:\n1. `game_project_web` 빌드 스크립트(`scripts/deploy-web.sh` 또는 해당 build 명령)에 `--web-renderer html` 플래그 추가. 또는 index.html/flutter bootstrap에서 `renderer: 'html'` 명시.\n2. (선택) 데스크탑은 canvaskit 유지하고 모바일만 html 쓰는 auto 모드가 지원되는지 확인. 지원되면 auto로, 아니면 전역 html로.\n3. `flutter analyze` 기존 5 외 추가 0 확인.\n4. `scripts/deploy-web.sh` 빌드/Nginx/CF 퍼지 전부 성공까지 실행.\n5. 검증:\n   - 데스크탑 Chrome: 랜딩/방만들기 정상 동작, 폰트 깨짐 없음.\n   - 모바일 Chrome(Android) 시크릿 탭: 방만들기 진입 시 게임 선택/요금제 섹션 렌더 확인.\n   - 실패 시 즉시 롤백 (플래그 제거 후 재배포).\n6. 커밋: `fix(web): html renderer로 전환 — 모바일 canvaskit 블랭크 우회` (기능 단위, `git add -A` 금지).\n7. Memory-Bank activeContext.md '현재 포커스' 갱신 + progress.md 기록. 롤백 절차도 activeContext에 1줄 남긴다.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (빌드 설정 전환).\n- html 렌더러는 폰트/필터/일부 CustomPaint에서 시각적 차이 가능. 데스크탑/모바일 양쪽 스모크 확인 필수.\n- PR-FIX5는 '우회' 조치이며, 원인 확정(섹션 bisect)은 별도 PR-FIX6로 남긴다.\n\n공수: ~40분 (전환 10 + 빌드/배포 15 + 검증 15)",
+      "status": "done",
+      "startedAt": "2026-04-20T06:54:03.038Z",
+      "completedAt": "2026-04-20T06:55:08.808Z"
+    },
+    {
+      "id": "PR-FIX7",
+      "title": "모바일 웹 canvaskit CDN 셀프호스팅 — --no-web-resources-cdn",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX7: 모바일 방만들기 블랭크 문제의 1차 대체 우회책. Flutter Web 빌드 시 `--no-web-resources-cdn` 옵션을 적용해 canvaskit.js/.wasm을 CDN이 아닌 자체 도메인에서 서빙한다.\n\n배경:\n- PR-FIX5(html 렌더러 전환)는 Flutter 최신 버전에서 `--web-renderer` 플래그가 제거돼 원안 폐기됨.\n- 모바일 Chrome/Safari에서 create_room_config 화면이 블랭크. 캐시 원인은 CEO가 배제.\n- 가설: canvaskit.js를 Google CDN(www.gstatic.com/flutter-canvaskit)에서 받아오는데 모바일 네트워크에서 지연/차단/HTTP2 문제로 페인트 중단. 자체 도메인에서 서빙하면 우회 가능.\n\n작업:\n1. `scripts/deploy-web.sh` 의 `flutter build web` 커맨드에 `--no-web-resources-cdn` 플래그 추가.\n2. `flutter analyze` 기존 5 외 추가 0 확인.\n3. 빌드/Nginx/CF 퍼지 전부 성공까지 실행.\n4. 검증:\n   - 데스크탑 Chrome: nolza.org 랜딩/방만들기 정상 동작.\n   - `curl -sI https://nolza.org/canvaskit/canvaskit.js` 또는 `/canvaskit/canvaskit.wasm` 200 OK 확인 (자체 도메인에서 서빙됨을 확인).\n   - 모바일 Chrome(Android) 시크릿 탭: 방만들기 진입 시 게임 선택/요금제 섹션 렌더 확인.\n   - 네트워크 패널에서 canvaskit.* 요청이 nolza.org 로 가는지 확인.\n   - 실패 시 즉시 롤백 (플래그 제거 후 재배포).\n5. 커밋: `fix(web): canvaskit 자체 호스팅 — 모바일 CDN 지연 우회` (기능 단위, `git add -A` 금지).\n6. Memory-Bank activeContext.md '현재 포커스' 갱신 + progress.md 기록. PR-FIX5 원안 폐기 사유도 1줄 남긴다.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (빌드 설정 전환).\n- 빌드 산출물 크기 증가(수 MB) 가능. 배포 후 `build/web/canvaskit/` 존재 확인.\n- PR-FIX7 배포 후에도 모바일 블랭크 재현되면 PR-FIX6(섹션 bisect)로 넘어간다.\n\n공수: ~30분 (플래그 적용 5 + 빌드/배포 15 + 검증 10)",
+      "status": "done",
+      "startedAt": "2026-04-20T06:58:00.412Z",
+      "completedAt": "2026-04-20T07:00:49.469Z"
+    },
+    {
+      "id": "PR-FIX6",
+      "title": "모바일 웹 블랭크 원인 bisect — 섹션별 렌더 확인",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX6: PR-FIX7(캔버스킷 셀프호스팅)로도 모바일 방만들기 블랭크가 재현되는 경우에만 실행. 원인 확정용 bisect PR.\n\n전제조건:\n- PR-FIX7 배포 후 모바일 시크릿 탭에서 여전히 방만들기 하단 섹션이 비어 보임을 CEO가 확인한 경우에만 착수. CEO 확인 전이면 이 PR은 대기 상태.\n\n작업:\n1. `create_room_config_screen.dart` 의 body Column children 을 섹션 단위로 분리 식별:\n   - 섹션1: 방 제목\n   - 섹션2: 참여자 수 슬라이더\n   - 섹션3: GameTypeSelector (PageView 기반 게임 선택)\n   - 섹션4: 요금제/기타 옵션\n2. 섹션별 `if (kDebugMode && false) section3` 같은 토글을 플래그로 구현. `const _bisectSkip = <String>{'section3'};` 방식으로 런타임 스킵.\n3. 모바일 Chrome 시크릿 탭에서 한 번에 하나씩 제외해 보며 어느 섹션이 페인트 차단의 원인인지 확정.\n4. 원인 섹션 확정 후 근본 수정 방향 제안 (ex: GameTypeSelector의 PageView 초기 레이아웃 Infinite height 추정 → SizedBox 명시, LayoutBuilder 사용, IntrinsicHeight 제거 등).\n5. 근본 수정 패치 적용 + 빌드/배포/검증.\n6. 커밋 분리:\n   - `chore(web): create_room_config 섹션 bisect 플래그 추가` (bisect 인프라)\n   - `fix(web): <원인 섹션> 모바일 렌더 이슈 근본 수정` (실제 픽스)\n7. Memory-Bank activeContext.md/progress.md 에 원인/해결 기록.\n\n검증:\n- 데스크탑 Chrome + 모바일 Chrome 시크릿 탭 양쪽에서 방만들기 전체 섹션 정상 렌더.\n- `flutter analyze` 기존 5 외 추가 0.\n- PR-FIX7 우회 플래그 제거 가능 여부 판단 후 별도 정리 PR 제안.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (렌더 디버깅).\n- bisect 중 배포는 최소화. 가능하면 로컬 `flutter run -d chrome --web-port=xxxx` 또는 로컬 터널로 모바일에서 확인.\n- 공수 1~2시간. 원인 확정 실패 시 추가 PR로 분리.\n\n공수: 1~2시간",
+      "status": "done",
+      "startedAt": "2026-04-20T07:00:49.471Z",
+      "completedAt": "2026-04-20T07:01:05.430Z"
+    },
+    {
+      "id": "PR-FIX8",
+      "title": "방만들기 데스크톱 웹 좌측 진행순서 + 방 만들기 CTA 미렌더 복구",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX8: 데스크톱 Chrome(>=900px)에서 방만들기 화면 좌측 _LeftPlanPanel 진행순서/플랜 리스트가 비어 보이고, 그 결과 좌측 하단 BottomCta(방 만들기 버튼)도 함께 사라져 보이는 문제를 복구한다.\n\n증거 파일:\n- game_project_app/lib/features/room/screens/create_room/create_room_config_screen.dart\n  - 471-523: isWide(>=900) 분기에서 좌측 _LeftPlanPanel + 우측 SingleChildScrollView(플랜 섹션 없음) 구성\n  - 576-688: _LeftPlanPanel: 진행순서 제목 + PresetRow + EmptyPlan/ReorderablePlanList + BottomCta\n  - 55: '// 진입 시 기본 게임 1개를 자동으로 추가해 CTA 즉시 활성화한다.'\n- 최근 커밋 3bff441 (기본 게임 자동 추가)가 있는데도 좌측 진행순서가 비어 보인다는 CEO 제보(2026-04-21)\n\n증상:\n- 데스크톱 Chrome에서 방만들기 진입 → 좌측 상단 '진행 순서' 제목만 보이고 플랜 리스트 영역이 비어 있음(혹은 프리셋 Row 하단 전체 공백)\n- 좌측 하단 BottomCta(방 만들기 버튼) 역시 뷰포트 밖이거나 렌더 안 돼 보임 — CEO가 '방만들기 버튼이 없다'고 지적\n\n가설 후보(순서대로 확인):\n1. initState의 기본 게임 자동 추가 로직이 implementedGameTypes가 빈 경우 no-op → _gamePlan 여전히 빈 상태 → EmptyPlan() 표시되는데 높이가 너무 작거나 SingleChildScrollView 내에서 0 높이\n2. _LeftPlanPanel 최상위 Container에 높이 constraint 미전달 → Expanded(SingleChildScrollView)가 Column 내에서 Infinite height를 못 받아 렌더 실패\n3. 기본 게임 자동 추가는 됐지만 ReorderablePlanList 내부에서 첫 렌더 시 레이아웃 exception → 디버그 콘솔 확인 필요\n\n작업:\n1. flutter run -d chrome 으로 재현하고 DevTools 콘솔/레이아웃 에러 캡처.\n2. 원인 확정 후 최소 수정(필요한 것만).\n3. 검증 기기: 데스크톱 Chrome(1440x900) + 모바일 크기(<900px) regression 확인\n4. flutter analyze 기존 5 외 추가 0.\n5. 빌드/배포: scripts/deploy-web.sh\n6. 커밋 1개: 'fix(web): 방만들기 좌측 진행순서 + 방 만들기 CTA 렌더 복구'\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (레이아웃 수정).\n- evidence-gate: 원인 확정 전 근거 없는 심볼 변경 금지.\n- Memory-Bank activeContext.md 갱신 + progress.md 기록.\n\n공수: 30~45분\n---END---",
+      "status": "done",
+      "startedAt": "2026-04-21T12:37:17.172Z",
+      "completedAt": "2026-04-21T12:58:25.900Z"
+    },
+    {
+      "id": "PR-FIX11",
+      "title": "방만들기 레이아웃 단일화 — 900px 분기 폐지, 1열 + 하단 BottomCta",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX11: 방만들기 화면 `CreateRoomConfigScreen`의 900px 분기(좌측 요약 패널 + 우측 설정 컬럼)를 폐지하고, 모바일/데스크톱 모두 단일 1열(maxWidth 720) + 하단 고정 BottomCta로 통합한다.\n\n배경:\n- 900px 이하: 게임 선택 섹션 자체가 안 보이고 자동 추가된 폭탄박스로 바로 \"방 만들기\"가 되어버림.\n- 900px 이상: 좌측 패널이 비어 CTA(방 만들기 버튼) 자체가 보이지 않음.\n- 좌/우 분리 구조가 원인. B2B 임베드에서 700px 이하 iframe도 흔해 분기 유지 비용 큼.\n\n증거 파일:\n- game_project_app/lib/features/room/screens/create_room/create_room_config_screen.dart\n  - 약 471-523: isWide 분기\n  - 약 658-676: _LeftPlanPanel 및 BottomCta 배치\n  - initState: 기본 게임(폭탄박스) 자동 추가 로직\n- game_project_app/lib/features/room/screens/create_room/widgets/plan_widgets.dart (PresetRow, BottomCta 등)\n\n작업:\n1. isWide/900px MediaQuery 분기 전면 삭제. `_LeftPlanPanel` 위젯 사용처 제거 (위젯 자체는 다른 화면에서 쓰이면 유지, 안 쓰이면 삭제).\n2. 단일 Column 레이아웃:\n   - `ConstrainedBox(maxWidth: 720)` + `ListView`/`SingleChildScrollView`\n   - 순서: 타이틀 → 플레이어 수 → **PresetRow** → 게임 선택 섹션 → 공개방 토글 → (기타 옵션) → 하단 BottomCta\n   - PresetRow는 게임 선택 섹션 바로 위에 배치.\n3. `initState`의 기본 게임 자동 추가 로직 제거. 빈 상태에서는 게임 선택 섹션이 \"게임을 1개 이상 선택해주세요\" 안내 + 선택된 게임 0개면 BottomCta 비활성(기존 가드 유지).\n4. BottomCta는 `Scaffold.bottomNavigationBar` 또는 `Stack` 하단 고정으로 모든 뷰포트에서 항상 가시성 확보. SafeArea 처리.\n5. 키보드 올라올 때 BottomCta가 입력 필드 가리지 않도록 `resizeToAvoidBottomInset` + 스크롤 여백 확인.\n6. 검증:\n   - Chrome DevTools 디바이스 에뮬: 360px / 720px / 1024px / 1440px 전부에서 게임 선택 섹션과 방 만들기 CTA가 동시에 보이는지.\n   - 게임 0개 상태에서 CTA 비활성, 1개 이상 선택 시 활성화.\n   - flutter analyze 기존 5 외 추가 0.\n7. 빌드/배포: scripts/deploy-web.sh\n8. 커밋 1개: 'refactor(web): 방만들기 레이아웃 단일화 — 900px 분기 폐지 + 하단 CTA 고정'\n\n전제조건:\n- PR-FIX8 커밋이 main에 들어온 뒤 그 위에 진행. FIX8이 좌측 패널을 복구했든 말든 FIX11이 단일 컬럼으로 덮어쓰므로 conflict는 사소. 병합 후 FIX10 진행.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (레이아웃 재구성).\n- Memory-Bank 갱신 (decisions.md 2026-04-21 + activeContext.md).\n\n공수: 60분\n---END---",
+      "status": "done",
+      "startedAt": "2026-04-21T12:58:25.904Z",
+      "completedAt": "2026-04-21T13:02:06.520Z"
+    },
+    {
+      "id": "PR-FIX10",
+      "title": "방만들기 선택 카드 주황 배경 → 테두리 강조로 가독성 개선",
+      "agent": "flutter-ux-implementer",
+      "prompt": "---FE---\nPR-FIX10: 방만들기 화면에서 카드(게임 선택/옵션 등)가 선택됐을 때 연한 주황색 배경이 채워져 내부 텍스트 대비가 낮아지는 문제를 '테두리 강조(A안)'로 교체해 가독성을 확보한다.\n\n증거 파일:\n- game_project_app/lib/features/room/screens/create_room/create_room_config_screen.dart + widgets/*\n- DesignTokens primary/accent 관련 색상 사용처 grep 필요\n\n작업:\n1. 선택 상태 카드 decoration에서 color: primary.withValues(alpha: ...) 배경 fill 제거 또는 중립 배경 복귀.\n2. Border.all(color: DesignTokens.primary, width: 2) + 미선택은 outline 동일 폭 유지(레이아웃 shift 방지).\n3. 선택 피드백(체크 아이콘, primary 포인트 등) 유지.\n4. 대상 위젯 grep 후 공통 스타일이면 한 번에, 분리돼 있으면 개별 수정.\n5. 검증:\n   - 데스크톱 Chrome: 선택/비선택 전환 시 본문 텍스트 가독성 확보, WCAG AA 대비 수준(본문 4.5:1).\n   - 여러 카드 동시 선택 시 시인성 유지.\n   - flutter analyze 기존 5 외 추가 0.\n6. 빌드/배포: scripts/deploy-web.sh\n7. 커밋 1개: 'fix(web): 방만들기 선택 카드 테두리 강조로 가독성 개선'\n\n전제조건:\n- PR-FIX8/PR-FIX9 완료 후 실행.\n\n주의:\n- 에셋 검색 완료: 매칭 없음 (색상/테두리 토큰 재활용).\n- Memory-Bank 갱신.\n\n공수: 25분\n---END---",
+      "status": "done",
+      "startedAt": "2026-04-21T13:02:06.524Z",
+      "completedAt": "2026-04-21T13:06:33.254Z"
+    }
+  ]
+}

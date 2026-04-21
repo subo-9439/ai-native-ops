@@ -97,13 +97,37 @@ function createFakeInteraction(raw) {
  * @param {number} deps.port
  * @param {string} [deps.forwardSecret]  Cloudflare Worker 공유 시크릿 (선택)
  */
-function startInteractionServer({ handleCommand, port, forwardSecret }) {
+function startInteractionServer(deps) {
+  const { handleCommand, port, forwardSecret } = deps;
   const app = express();
   app.use(express.json({ limit: '2mb' }));
 
   // 헬스체크
   app.get('/', (_req, res) => res.json({ ok: true, service: 'discord-bot-http' }));
   app.get('/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
+
+  // 큐 관리 API (로컬 전용)
+  if (typeof deps.onQueueStart === 'function') {
+    app.post('/queue/start', async (_req, res) => {
+      try {
+        await deps.onQueueStart();
+        res.json({ ok: true, action: 'queue_start' });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+  }
+  if (typeof deps.onQueueStatus === 'function') {
+    app.get('/queue/status', (_req, res) => {
+      res.json({ ok: true, summary: deps.onQueueStatus() });
+    });
+  }
+  if (typeof deps.onQueueRaw === 'function') {
+    app.get('/queue/raw', (_req, res) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.json(deps.onQueueRaw());
+    });
+  }
 
   // Cloudflare Worker → Bot Interaction 포워딩
   app.post('/interaction', async (req, res) => {

@@ -1,6 +1,8 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
-const { startAlertsWatcher } = require('./alerts-watcher');
+const { startAlertsWatcher, ensureAlertsChannel } = require('./alerts-watcher');
+const { execSync } = require('child_process');
+const path = require('path');
 const statusCmd   = require('./commands/status');
 const roomsCmd    = require('./commands/rooms');
 const closeRoomCmd = require('./commands/close-room');
@@ -18,6 +20,12 @@ const {
   executeSkill,
 } = require('./commands/claude');
 const docsCmd     = require('./commands/docs');
+const {
+  loadQueue, saveQueue, pickNext, completeItem,
+  currentItem, queueSummary, peekNext, recoverStaleItems,
+} = require('./work-queue');
+const { startPoller } = require('./sync-poller');
+const { recordDiscordEvent } = require('./sync-writer');
 
 const client = new Client({
   intents: [
@@ -58,13 +66,91 @@ client.once('clientReady', async () => {
   console.log(`[Bot] 에이전트 채널: ${[...AGENT_CHANNELS.keys()].map(c => '#' + c).join(', ')}`);
   console.log(`[Bot] CEO 기획실: #${CEO_CHANNEL} (메시지 전송 또는 ${TRIGGER_EMOJI} 반응 시 병렬 dispatch)`);
 
+  // work-queue 상태 확인 + stale in_progress 복구
+  const staleRecovered = recoverStaleItems();
+  if (staleRecovered.length > 0) {
+    console.warn(`[Bot] ${staleRecovered.length}개 stale in_progress 아이템을 failed로 복구: ${staleRecovered.map(i => i.id).join(', ')}`);
+  }
+
+  const queue = loadQueue();
+  let queueStats = { total: 0, done: 0, inProg: 0, pending: 0 };
+  if (queue?.items) {
+    queueStats = {
+      total: queue.items.length,
+      done: queue.items.filter(i => i.status === 'done').length,
+      inProg: queue.items.filter(i => i.status === 'in_progress').length,
+      pending: queue.items.filter(i => i.status === 'pending').length,
+    };
+    console.log(`[Bot] loaded work-queue: ${queueStats.total} items (done=${queueStats.done}, in_progress=${queueStats.inProg}, pending=${queueStats.pending})`);
+  } else {
+    console.log('[Bot] work-queue: 없음');
+  }
+
+  // 기동 공지: #alerts 채널에 온라인 embed (커밋 SHA + 큐 상태 + stale 복구 + 시각)
+  try {
+    await sendOnlineNotice(client, { staleRecovered, queueStats });
+  } catch (err) {
+    console.error('[Bot] 온라인 공지 실패:', err.message);
+  }
+
   // docker health_status → #alerts 푸시 watcher (실패해도 봇은 계속 동작)
   try {
     await startAlertsWatcher(client);
   } catch (err) {
     console.error('[Bot] alerts-watcher 시작 실패:', err.message);
   }
+
+  // claude-sync 폴러 (터미널+Discord 이벤트 공유 + digest 생성)
+  try {
+    startPoller({ client });
+  } catch (err) {
+    console.error('[Bot] sync-poller 시작 실패:', err.message);
+  }
 });
+
+/**
+ * 봇 기동 공지 — #alerts 채널에 "🟢 프로젝트매니저 온라인" embed를 전송한다.
+ * 커밋 SHA, 큐 상태, stale 복구 건수, 시각을 필드로 표기해 재시작 반영 여부를 즉시 눈으로 확인하게 한다.
+ */
+async function sendOnlineNotice(client, { staleRecovered = [], queueStats = {} } = {}) {
+  const channel = await ensureAlertsChannel(client);
+  if (!channel) return;
+
+  const repoRoot = path.resolve(__dirname, '..');
+  let sha = 'unknown';
+  let dirty = '';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    const status = execSync('git status --porcelain', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    if (status) dirty = ' (dirty)';
+  } catch (err) {
+    console.warn('[Bot] git SHA 조회 실패:', err.message);
+  }
+
+  const nowKst = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false });
+  const qs = queueStats;
+  const queueLine = qs.total
+    ? `done=${qs.done}, in_progress=${qs.inProg}, pending=${qs.pending} (total=${qs.total})`
+    : '없음';
+  const staleLine = staleRecovered.length
+    ? `${staleRecovered.length}건 (${staleRecovered.map(i => i.id).join(', ')})`
+    : '0건';
+
+  const embed = new EmbedBuilder()
+    .setTitle('🟢 프로젝트매니저 온라인')
+    .setColor(0x2ecc71)
+    .addFields(
+      { name: '커밋 SHA', value: `\`${sha}\`${dirty}`, inline: true },
+      { name: '큐 상태', value: queueLine, inline: false },
+      { name: 'stale 복구', value: staleLine, inline: true },
+      { name: '시각 (KST)', value: nowKst, inline: true },
+    )
+    .setFooter({ text: '재시작 후 이 공지가 안 뜨면 봇이 실제로 로드되지 않은 것' });
+
+  await channel.send({ embeds: [embed] });
+}
 
 /**
  * Slash command 라우팅 — Gateway와 HTTP 양쪽에서 재사용
@@ -120,6 +206,27 @@ client.on('interactionCreate', async (interaction) => {
 // ─── 에이전트 채널: 메시지 → 스레드 생성 + Claude 실행 ──
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // ── 큐 관리 명령어 (!큐상태, !큐시작, !큐중지) — 어디서든 사용 가능 ──
+  const cmd = message.content.trim();
+  if (cmd === '!큐상태') {
+    await message.reply(queueSummary());
+    return;
+  }
+  if (cmd === '!큐시작') {
+    await handleQueueStart(message.channel);
+    return;
+  }
+  if (cmd === '!큐중지') {
+    const cur = currentItem();
+    if (!cur) {
+      await message.reply('현재 진행 중인 큐 아이템이 없습니다.');
+      return;
+    }
+    completeItem(cur.id, false);
+    await message.reply(`⏸️ 큐 중지: **${cur.id}** → failed 처리. 다시 진행하려면 CEO 기획실에서 "진행해"라고 말하세요.`);
+    return;
+  }
 
   // 스레드 내 !닫기 → 즉시 아카이브
   if (message.content.trim() === '!닫기' && message.channel.isThread()) {
@@ -221,7 +328,24 @@ client.on('messageCreate', async (message) => {
         if (r) await r.remove().catch(() => {});
         await message.react('✅');
 
-        await thread.send({ embeds: [buildResultEmbed('dev', label, buffer, timedOut)] });
+        // <<START_QUEUE>> 태그를 응답에서 제거하고 embed에 표시
+        const cleanBuffer = buffer.replace(/<<START_QUEUE>>/g, '').trim();
+        await thread.send({ embeds: [buildResultEmbed('ceo', label, cleanBuffer, timedOut)] });
+
+        // CEO가 큐 진행을 승인 → 자동 디스패치 시작
+        // pending 아이템이 있을 때만 호출. 없으면 사일런트 대신 경고 reply로 가시화.
+        if (buffer.includes('<<START_QUEUE>>')) {
+          if (peekNext()) {
+            await handleQueueStart(thread);
+          } else {
+            await thread.send(
+              '⚠️ 큐에 pending 아이템 없음 — `<<START_QUEUE>>`는 기존 pending을 pick할 뿐 채팅 텍스트를 파싱해 append하지 않습니다.\n' +
+              '큐에 새 PR을 넣으려면 `project-manager/work-queue.json`을 직접 편집해야 합니다.\n' +
+              '단건 PR이면 디스패치 채널로 `---BE---/---FE---/---AI---` 블록을 바로 보내는 편이 빠릅니다.\n' +
+              '런북: `project-manager/docs/INCIDENT_QUEUE_APPEND_MISSING.md`'
+            );
+          }
+        }
       } catch (err) {
         console.error(`[Bot] CEO 대화 오류:`, err);
         await message.reply(`❌ 오류: ${err.message}`);
@@ -240,6 +364,17 @@ client.on('messageCreate', async (message) => {
     if (!AGENT_CHANNELS.has(parentName) && !DISPATCH_CHANNELS.has(parentName)) return;
 
     try {
+      // 스레드 내 dispatch 블록 감지 → 현재 스레드에서 바로 병렬 디스패치
+      // (최상위 채널로 올릴 필요 없이 스레드 안에서 ---BE---/---FE---/---AI--- 바로 실행)
+      if (DISPATCH_CHANNELS.has(parentName) && /---\s*(BE|FE|AI|ALL)\s*---/i.test(userMessage)) {
+        await message.react('⏳');
+        await dispatchToAgents(message.channel, userMessage);
+        const r0 = message.reactions.cache.get('⏳');
+        if (r0) await r0.remove().catch(() => {});
+        await message.react('✅');
+        return;
+      }
+
       await message.react('⏳');
 
       const agentChannel = AGENT_CHANNELS.has(parentName) ? AGENT_CHANNELS.get(parentName)
@@ -254,7 +389,22 @@ client.on('messageCreate', async (message) => {
       if (r) await r.remove().catch(() => {});
       await message.react('✅');
 
-      await message.channel.send({ embeds: [buildResultEmbed(agentChannel, label, buffer, timedOut)] });
+      const cleanBuffer = buffer.replace(/<<START_QUEUE>>/g, '').trim();
+      await message.channel.send({ embeds: [buildResultEmbed(agentChannel, label, cleanBuffer, timedOut)] });
+
+      // CEO 스레드에서 큐 시작 승인 감지
+      // pending 아이템이 있을 때만 호출. 없으면 사일런트 대신 경고 reply로 가시화.
+      if (agentChannel === 'ceo' && buffer.includes('<<START_QUEUE>>')) {
+        if (peekNext()) {
+          await handleQueueStart(message.channel);
+        } else {
+          await message.channel.send(
+            '⚠️ 큐에 pending 아이템 없음 — `<<START_QUEUE>>`는 기존 pending을 pick할 뿐 채팅 텍스트를 파싱해 append하지 않습니다.\n' +
+            '큐에 새 PR을 넣으려면 `project-manager/work-queue.json`을 직접 편집해야 합니다.\n' +
+            '런북: `project-manager/docs/INCIDENT_QUEUE_APPEND_MISSING.md`'
+          );
+        }
+      }
     } catch (err) {
       console.error(`[Bot] 스레드 follow-up 오류:`, err);
       await message.reply(`❌ 오류: ${err.message}`);
@@ -391,7 +541,22 @@ async function handleDispatchCommand(interaction) {
  *   ---AI---
  *   게임 시작 시 라운드별 프롬프트 생성 로직 추가
  */
+// 체이닝 재귀 깊이 제한 — dispatchToAgents → maybeAutoChain → dispatchQueueItem → dispatchToAgents 루프 방지
+const MAX_CHAIN_DEPTH = 20;
+let _chainDepth = 0;
+
 async function dispatchToAgents(thread, taskContent) {
+  // 체이닝 재귀 깊이 확인
+  _chainDepth++;
+  if (_chainDepth > MAX_CHAIN_DEPTH) {
+    console.error(`[Dispatch] 체이닝 깊이 초과 (${_chainDepth}/${MAX_CHAIN_DEPTH}) — 무한루프 방지를 위해 중단`);
+    await thread.send(`❌ **체이닝 깊이 초과** (${MAX_CHAIN_DEPTH}회) — 무한루프 방지를 위해 자동 중단되었습니다. \`!큐상태\`로 확인하세요.`);
+    _chainDepth--;
+    return;
+  }
+
+  try {
+
   const sections = parseDispatchSections(taskContent);
   const targets = resolveTargets(sections);
 
@@ -432,6 +597,13 @@ async function dispatchToAgents(thread, taskContent) {
     `${allOk ? '✅' : '⚠️'} **전체 완료** — ${succeeded}/${results.length} 에이전트 성공\n` +
     `이 스레드에서 결과를 확인하고 추가 지시를 입력하세요.`
   );
+
+  // ─── 체이닝 훅: 큐 아이템 완료 + 다음 자동 디스패치 ───
+  await maybeAutoChain(thread, allOk);
+
+  } finally {
+    _chainDepth--;
+  }
 }
 
 // ─── Helper ──────────────────────────────────────────────
@@ -452,6 +624,148 @@ function makeFakeInteraction(message) {
   };
 }
 
+// ─── 체이닝: 큐 아이템 완료 → 같은 스레드에서 다음 자동 디스패치 ─────
+/**
+ * 현재 in_progress 큐 아이템을 완료 처리하고, 같은 스레드에서 다음 아이템을 자동 디스패치.
+ * dispatchToAgents 완료 후 호출됨.
+ */
+async function maybeAutoChain(thread, success) {
+  const cur = currentItem();
+  if (!cur) return; // 큐 아이템이 아닌 일반 디스패치
+
+  const queue = loadQueue();
+  const total = queue?.items?.length || 0;
+  const doneCount = (queue?.items?.filter(i => i.status === 'done').length || 0) + 1; // 현재 것 포함
+
+  // 현재 아이템 완료 처리
+  completeItem(cur.id, success);
+  console.log(`[Chain] ${cur.id} 완료 (${success ? 'success' : 'failed'})`);
+
+  if (!success) {
+    await thread.send(
+      `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `⚠️ **${cur.id} 실패** — 체이닝 일시정지 (${doneCount - 1}/${total} 완료)\n` +
+      `재시작: CEO 기획실에서 "진행해" 또는 \`!큐시작\``
+    );
+    return;
+  }
+
+  // 다음 아이템 확인
+  const next = peekNext();
+  if (!next) {
+    // 전체 완료
+    await thread.send(
+      `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🎉 **큐 전체 완료!** (${total}/${total})\n\n` +
+      `${queueSummary()}\n\n` +
+      `모든 아이템이 처리되었습니다.`
+    );
+    return;
+  }
+
+  // 다음 아이템 진행 — 같은 스레드에서 계속
+  const nextItem = pickNext();
+  await thread.send(
+    `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `✅ **${cur.id}** 완료 (${doneCount}/${total})\n` +
+    `🔗 **다음** → **${nextItem.id}** (${nextItem.title}) · ${nextItem.agent}\n` +
+    `남은 큐: ${total - doneCount - 1}개\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+  );
+
+  console.log(`[Chain] chaining ${nextItem.id} in same thread`);
+  await dispatchToAgents(thread, nextItem.prompt);
+}
+
+/**
+ * 큐 시작 — <<START_QUEUE>> 감지, !큐시작, HTTP /queue/start에서 호출
+ * CEO 기획실에 하나의 스레드를 만들고 거기서 전체 큐를 순차 진행.
+ */
+async function handleQueueStart(notifyChannel) {
+  const cur = currentItem();
+  if (cur) {
+    await notifyChannel.send(`이미 진행 중: **${cur.id}** (${cur.title})`);
+    return;
+  }
+  const next = pickNext();
+  if (!next) {
+    const q = loadQueue();
+    const total = q?.items?.length || 0;
+    if (total === 0) {
+      await notifyChannel.send(
+        `📭 **큐 비어있음** — \`project-manager/work-queue.json\`에 아이템이 없습니다.\n` +
+        `새 작업을 추가하려면 CEO 기획실에서 기획 논의 후 디스패치 섹션(\`---BE---/---FE---/---AI---\`)으로 지시하거나, work-queue.json을 직접 편집하세요.`
+      );
+      return;
+    }
+    const done   = q.items.filter(i => i.status === 'done').length;
+    const failed = q.items.filter(i => i.status === 'failed').length;
+    const allDone = done === total;
+    const header = allDone
+      ? `✅ **모든 큐 아이템 처리 완료** (${done}/${total})`
+      : `⏹️ **pending 아이템 없음** — 진행 가능한 작업이 없습니다`;
+    const hint = failed > 0
+      ? `실패 ${failed}건이 있습니다. 재시도하려면 work-queue.json에서 해당 아이템의 \`status\`를 \`pending\`으로 되돌리고 \`!큐시작\`.`
+      : `새 아이템을 추가하려면 work-queue.json에 append 후 \`!큐시작\`, 또는 CEO 기획실에서 새 지시문을 작성하세요.`;
+    await notifyChannel.send(`${header}\n\n${queueSummary()}\n\n${hint}`);
+    return;
+  }
+
+  const queue = loadQueue();
+  const total = queue?.items?.length || 0;
+  const mm = String(new Date().getMonth() + 1).padStart(2, '0');
+  const dd = String(new Date().getDate()).padStart(2, '0');
+  const itemList = queue.items.map((item, i) =>
+    `${i + 1}. **${item.id}** — ${item.title} (${item.agent})`
+  ).join('\n');
+  const dashboardUrl = (process.env.PUBLIC_BASE_URL || 'http://localhost:4000') + '/queue';
+
+  // OPS7: 호출자가 이미 스레드(CEO가 기획실에서 논의 중인 스레드)면 거기서 그대로 큐 진행.
+  // 별도 스레드/메시지를 띄우면 CEO가 트리거한 위치와 큐 진행 위치가 달라져 혼란.
+  if (notifyChannel.isThread && notifyChannel.isThread()) {
+    await notifyChannel.send(
+      `📋 **큐 디스패치 시작** — ${total}개 아이템\n${itemList}\n\n📊 [실시간 대시보드](${dashboardUrl})\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🚀 **시작** → **${next.id}** (${next.title}) · ${next.agent}\n` +
+      `전체: ${total}개 · 남은 큐: ${total - 1}개\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+    );
+    console.log(`[Chain] queue start: ${next.id} in existing thread ${notifyChannel.name}`);
+    await dispatchToAgents(notifyChannel, next.prompt);
+    return;
+  }
+
+  // Fallback: 일반 채널(!큐시작) 또는 HTTP /queue/start — CEO 메인 채널에 kickMsg + 새 스레드
+  const ceoChannel = client.channels.cache.find(
+    ch => ch.name === CEO_CHANNEL && ch.isTextBased() && !ch.isThread()
+  );
+  if (!ceoChannel) {
+    await notifyChannel.send(`❌ CEO 채널을 찾을 수 없습니다.`);
+    return;
+  }
+
+  const kickMsg = await ceoChannel.send(
+    `📋 **큐 디스패치 시작** — ${total}개 아이템\n${itemList}\n\n📊 [실시간 대시보드](${dashboardUrl})`
+  );
+
+  const thread = await kickMsg.startThread({
+    name: `🔗 [${mm}/${dd}] 큐 디스패치 (${total}개)`,
+    autoArchiveDuration: 1440,
+  });
+
+  await thread.send(
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🚀 **시작** → **${next.id}** (${next.title}) · ${next.agent}\n` +
+    `전체: ${total}개 · 남은 큐: ${total - 1}개\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+  );
+
+  console.log(`[Chain] queue start: ${next.id} in thread ${thread.name}`);
+  await dispatchToAgents(thread, next.prompt);
+}
+
+// (큐 관리 명령어는 위 messageCreate 핸들러에 통합됨)
+
 client.on('error', (err) => console.error('[Bot] 클라이언트 오류:', err));
 process.on('unhandledRejection', (err) => console.error('[Bot] 미처리 거부:', err));
 
@@ -470,4 +784,15 @@ startInteractionServer({
     console.log(`[Interaction] HTTP command: /${commandName}`);
     await routeCommand(commandName, fakeInteraction);
   },
+  onQueueStart: async () => {
+    // handleQueueStart 내부에서 CEO 채널 탐색 + 스레드 생성
+    // notifyChannel은 fallback용 (스레드 생성 전 에러 메시지용)
+    const fallback = client.channels.cache.find(
+      ch => ch.name === CEO_CHANNEL && ch.isTextBased() && !ch.isThread()
+    );
+    if (!fallback) throw new Error('CEO 채널 없음');
+    await handleQueueStart(fallback);
+  },
+  onQueueStatus: () => queueSummary(),
+  onQueueRaw: () => loadQueue() || { items: [] },
 });

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whosbuying.local/harness/schemas/rule_candidate.schema.json",
+  "title": "Rule Candidate",
+  "description": "규칙 후보 상태 머신 항목 스키마",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "후보 고유 ID"
+    },
+    "title": {
+      "type": "string",
+      "description": "후보 제목"
+    },
+    "description": {
+      "type": "string",
+      "description": "후보 설명"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "evidence_checked",
+        "proposed",
+        "approved",
+        "applied",
+        "monitored",
+        "stable",
+        "rolled_back",
+        "rejected"
+      ],
+      "description": "현재 상태 (hr_candidate_state_machine.yaml 참조)"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["declaration", "callsite", "docs", "tests"]
+          },
+          "path": {
+            "type": "string",
+            "description": "근거 파일 경로"
+          },
+          "detail": {
+            "type": "string",
+            "description": "근거 상세"
+          }
+        },
+        "required": ["type", "path"],
+        "additionalProperties": false
+      },
+      "description": "근거 목록"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approved_by": {
+      "type": "string",
+      "description": "승인자 (사용자 또는 시스템)"
+    },
+    "reason": {
+      "type": "string",
+      "description": "rejected/rolled_back 시 사유 (필수)"
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string"
+          }
+        },
+        "required": ["from", "to", "at"],
+        "additionalProperties": false
+      },
+      "description": "상태 전이 이력"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "state",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "state": {
+        "enum": ["rejected", "rolled_back"]
+      }
+    }
+  },
+  "then": {
+    "required": ["reason"]
+  }
+}

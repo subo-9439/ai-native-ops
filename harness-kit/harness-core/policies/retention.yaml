@@ -1,0 +1,40 @@
+# retention.yaml — 메모리 보존 및 압축 정책
+
+version: "1.0.0"
+
+policy:
+  name: "retention"
+  description: "raw/current 메모리 파일의 보존, 회전, 압축 규칙을 정의한다."
+
+raw:
+  path: ".agent/harness/memory/raw/"
+  retain_days: 30
+  rotate:
+    trigger: "파일 크기 > 10MB 또는 라인 수 > 50000"
+    action: "현재 파일을 '{filename}.{date}.bak'으로 이동, 새 파일 생성"
+    max_backups: 5
+    oldest_action: "삭제"
+  files:
+    - events.jsonl
+    - config_audit.jsonl
+
+current:
+  path: ".agent/harness/memory/current/"
+  description: "최신 상태만 유지하는 파일들. 버전 관리됨."
+  compaction:
+    trigger:
+      - "raw events.jsonl > 5000 라인"
+      - "수동 요청"
+      - "릴리즈 전"
+    action:
+      - "raw에서 핵심 교훈/패턴을 추출하여 lessons.current.json에 반영"
+      - "규칙 후보를 rule_candidates.current.json에 반영"
+      - "harness_summary.md를 갱신"
+    preserve:
+      - "version 필드"
+      - "updated_at 필드"
+      - "기존 items 중 status가 stable인 항목"
+
+gitignore:
+  raw: "events.jsonl, config_audit.jsonl, *.bak — git 추적 제외"
+  current: "git 추적 포함 (팀 공유 대상)"

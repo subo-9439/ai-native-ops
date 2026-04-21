@@ -247,6 +247,136 @@ app.use(
   })
 );
 
+// ─── 큐 대시보드 (인증 불필요 — 실시간 모니터링용) ─────────
+const BOT_INTERNAL_URL = process.env.BOT_INTERNAL_URL || 'http://127.0.0.1:4040';
+
+app.get('/queue', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>큐 대시보드 — whosbuying ops</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,system-ui,'Segoe UI',sans-serif; background:#0d1117; color:#e6edf3; min-height:100vh; padding:24px; }
+  .header { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+  .header h1 { font-size:20px; font-weight:600; }
+  .header .live { width:8px; height:8px; border-radius:50%; background:#3fb950; animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .stats { display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
+  .stat { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px 20px; min-width:120px; }
+  .stat .num { font-size:28px; font-weight:700; }
+  .stat .label { font-size:12px; color:#8b949e; margin-top:4px; }
+  .stat.active .num { color:#58a6ff; }
+  .stat.done .num { color:#3fb950; }
+  .stat.pending .num { color:#d29922; }
+  .stat.failed .num { color:#f85149; }
+  .progress-bar { background:#21262d; border-radius:8px; height:8px; margin-bottom:24px; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,#3fb950,#58a6ff); transition:width .5s ease; border-radius:8px; }
+  .items { display:flex; flex-direction:column; gap:8px; }
+  .item { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; display:flex; align-items:center; gap:12px; transition:border-color .3s; }
+  .item.in_progress { border-color:#58a6ff; background:#161b2a; }
+  .item.done { opacity:.7; }
+  .item.failed { border-color:#f85149; }
+  .icon { font-size:20px; flex-shrink:0; }
+  .info { flex:1; }
+  .info .id { font-weight:600; font-size:14px; }
+  .info .title { color:#8b949e; font-size:13px; margin-top:2px; }
+  .agent { font-size:11px; padding:3px 8px; border-radius:4px; background:#21262d; color:#8b949e; flex-shrink:0; }
+  .time { font-size:11px; color:#6e7681; flex-shrink:0; }
+  .empty { text-align:center; padding:60px; color:#6e7681; }
+  .refresh { font-size:11px; color:#6e7681; text-align:center; margin-top:16px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="live"></div>
+  <h1>큐 대시보드</h1>
+</div>
+<div class="stats" id="stats"></div>
+<div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+<div class="items" id="items"></div>
+<div class="refresh" id="refresh"></div>
+<script>
+const BOT_URL = '/queue/data';
+const ICONS = { done:'✅', in_progress:'⏳', pending:'⏸️', failed:'❌' };
+const AGENT_LABELS = { 'backend-dev':'🔧 BE', 'frontend-dev':'🎨 FE', 'ai-dev':'🤖 AI' };
+
+function elapsed(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms/60000);
+  if (m < 1) return '방금';
+  if (m < 60) return m + '분 전';
+  return Math.floor(m/60) + '시간 ' + (m%60) + '분 전';
+}
+
+function duration(start, end) {
+  if (!start) return '';
+  const ms = (end ? new Date(end) : new Date()) - new Date(start);
+  const m = Math.floor(ms/60000), s = Math.floor((ms%60000)/1000);
+  return m > 0 ? m + '분 ' + s + '초' : s + '초';
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(BOT_URL);
+    const data = await res.json();
+    const items = data.items || [];
+    const done = items.filter(i=>i.status==='done').length;
+    const active = items.filter(i=>i.status==='in_progress').length;
+    const pending = items.filter(i=>i.status==='pending').length;
+    const failed = items.filter(i=>i.status==='failed').length;
+    const total = items.length;
+
+    document.getElementById('stats').innerHTML =
+      '<div class="stat done"><div class="num">'+done+'</div><div class="label">완료</div></div>' +
+      '<div class="stat active"><div class="num">'+active+'</div><div class="label">진행 중</div></div>' +
+      '<div class="stat pending"><div class="num">'+pending+'</div><div class="label">대기</div></div>' +
+      (failed?'<div class="stat failed"><div class="num">'+failed+'</div><div class="label">실패</div></div>':'') +
+      '<div class="stat"><div class="num">'+total+'</div><div class="label">전체</div></div>';
+
+    document.getElementById('progress').style.width = total ? ((done/total)*100)+'%' : '0%';
+
+    if (!total) {
+      document.getElementById('items').innerHTML = '<div class="empty">큐가 비어있습니다</div>';
+    } else {
+      document.getElementById('items').innerHTML = items.map(i =>
+        '<div class="item '+i.status+'">' +
+        '<div class="icon">'+ICONS[i.status]+'</div>' +
+        '<div class="info"><div class="id">'+i.id+'</div><div class="title">'+i.title+'</div></div>' +
+        '<div class="agent">'+(AGENT_LABELS[i.agent]||i.agent)+'</div>' +
+        '<div class="time">'+(i.status==='in_progress'?duration(i.startedAt):i.status==='done'?duration(i.startedAt,i.completedAt):'' )+'</div>' +
+        '</div>'
+      ).join('');
+    }
+
+    document.getElementById('refresh').textContent = '마지막 갱신: ' + new Date().toLocaleTimeString('ko');
+  } catch(e) {
+    document.getElementById('refresh').textContent = '연결 실패 — 봇이 꺼져있을 수 있습니다';
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>`);
+});
+
+// 큐 데이터 프록시 (봇 → 게이트웨이)
+app.get('/queue/data', async (req, res) => {
+  try {
+    const response = await fetch(BOT_INTERNAL_URL + '/queue/raw');
+    const data = await response.json();
+    res.header('Access-Control-Allow-Origin', '*');
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ items: [], error: 'bot unreachable' });
+  }
+});
+
 // ─── 헬스체크 ────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({

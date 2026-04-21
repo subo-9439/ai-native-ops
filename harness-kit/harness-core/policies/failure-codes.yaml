@@ -1,0 +1,62 @@
+# failure-codes.yaml — 하네스 표준 실패 코드 정의
+
+version: "1.0.0"
+
+codes:
+  # ── HB: Bootstrap 관련 ──
+  HB001:
+    category: bootstrap
+    severity: error
+    message: "부트스트랩 lock 획득 실패"
+    action: "report_only 모드로 전환"
+
+  HB002:
+    category: bootstrap
+    severity: error
+    message: "디렉토리 생성 실패"
+    action: "해당 하위 파일 skip, 보고서 기록"
+
+  HB003:
+    category: bootstrap
+    severity: error
+    message: "파일 쓰기 실패"
+    action: "skip, 보고서 기록"
+
+  HB004:
+    category: bootstrap
+    severity: warning
+    message: "hook 등록 실패"
+    action: "rules_only 모드로 전환"
+
+  HB005:
+    category: bootstrap
+    severity: warning
+    message: "VERSION 불일치 (업그레이드 필요)"
+    action: "기존 파일 백업 후 갱신"
+
+  # ── HG: Gate 관련 ──
+  HG001:
+    category: gate
+    severity: deny
+    message: "민감 경로 접근 거부"
+    action: "요청 차단, 이유 로깅"
+
+  HG002:
+    category: gate
+    severity: deny
+    message: "파괴 명령 실행 거부"
+    action: "요청 차단, 이유 로깅"
+
+  # ── HS: Schema 관련 ──
+  HS001:
+    category: schema
+    severity: warning
+    message: "스키마 검증 실패 (drift 감지)"
+    action: "해당 데이터 거부 또는 relaxed 모드에서 경고만"
+
+  # ── HR: Rule/Retention 관련 ──
+  HR001:
+    category: retention
+    severity: warning
+    message: "compaction trigger 조건 충족 — 압축 필요"
+    action: "수동 또는 자동 compaction 실행"

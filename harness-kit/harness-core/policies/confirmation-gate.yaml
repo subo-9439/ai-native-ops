@@ -1,0 +1,41 @@
+# confirmation-gate.yaml — 승인 전 자동 반영 금지 정책
+
+version: "1.0.0"
+
+policy:
+  name: "confirmation-gate"
+  description: "proposed 상태에서 approved 없이 applied로 전이하는 것을 금지한다."
+
+rules:
+  - id: CG-001
+    description: "모든 변경은 proposed → approved → applied 순서를 따른다."
+    enforce: strict
+    transitions:
+      allowed:
+        - from: proposed
+          to: approved
+          requires: ["user_confirmation"]
+        - from: approved
+          to: applied
+          requires: ["approved_state"]
+      denied:
+        - from: proposed
+          to: applied
+          reason: "승인 없이 적용 금지. 반드시 approved 상태를 거쳐야 한다."
+        - from: draft
+          to: applied
+          reason: "draft에서 바로 적용 금지."
+
+  - id: CG-002
+    description: "degraded 모드에서는 propose_only 허용."
+    enforce: relaxed
+    condition: "degraded_mode in ['manual', 'report_only']"
+    behavior: "제안(propose)만 가능. 실제 적용은 사람이 수행."
+
+  - id: CG-003
+    description: "자동 반영이 허용되는 유일한 경로."
+    enforce: strict
+    auto_apply_allowed_for:
+      - "하네스 자체 메모리 파일 (.agent/harness/memory/)"
+      - "이벤트 로그 (.agent/harness/memory/raw/)"
+    reason: "로그와 메모리 파일은 부수효과이므로 승인 없이 쓸 수 있다."

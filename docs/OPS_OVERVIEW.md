@@ -108,6 +108,21 @@ curl https://admin.nolza.org/health       # 외부 (Cloudflare 경유)
 
 ---
 
+## 운영 런북 (사고 대응 / 재발 방지)
+
+모든 프로젝트에 공통 적용되는 런북. 사고 발생 시 해당 문서를 먼저 읽는다.
+
+| 증상 | 런북 |
+|------|------|
+| `<<START_QUEUE>>` 태그를 보내도 아무 에이전트가 작업을 시작하지 않는다 | [`INCIDENT_QUEUE_APPEND_MISSING.md`](INCIDENT_QUEUE_APPEND_MISSING.md) |
+| 봇 코드 수정 후 `start.sh` 재실행해도 동작이 안 바뀐다 / `#alerts` 온라인 embed가 안 뜬다 | [`BOT_BEHAVIOR.md`](BOT_BEHAVIOR.md) §1 재기동 신뢰성 + §8 검증 체크리스트 |
+
+봇 자가 동작(기동 체인, 이벤트 핸들러, `<<START_QUEUE>>` 처리 한계, 사고 이력)은 [`BOT_BEHAVIOR.md`](BOT_BEHAVIOR.md)에 단일 출처로 정리.
+
+런북은 특정 프로젝트(whosbuying 등)에 종속되지 않도록 작성한다. 사고 기록은 하단 [타임라인] 섹션에 원본 그대로 보존하되, 상단 규칙/진단/해결 절차는 범용으로 유지.
+
+---
+
 ## 새 운영 환경 셋업 (다른 서버, 다른 도메인)
 
 `CUSTOMER_ONBOARDING.md` 참조. 한 번만 사람이 직접 해야 하는 단계:

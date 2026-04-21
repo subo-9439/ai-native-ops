@@ -1,0 +1,98 @@
+# hr_candidate_state_machine.yaml — 규칙 후보 상태 전이 머신
+
+version: "1.0.0"
+
+description: |
+  모든 규칙/변경 후보는 아래 상태 머신을 따른다.
+  approved 없이 applied로 전이하는 것은 금지한다.
+
+states:
+  - draft
+  - evidence_checked
+  - proposed
+  - approved
+  - applied
+  - monitored
+  - stable
+  - rolled_back
+  - rejected
+
+initial_state: draft
+
+transitions:
+  - from: draft
+    to: evidence_checked
+    trigger: "근거(declaration/callsite/docs/tests) 1개 이상 확보"
+    guard: "evidence-gate.md 통과"
+
+  - from: evidence_checked
+    to: proposed
+    trigger: "변경 제안 생성 완료"
+    guard: "없음"
+
+  - from: proposed
+    to: approved
+    trigger: "사용자 승인"
+    guard: "confirm_ui 또는 명시적 승인 텍스트"
+
+  - from: proposed
+    to: rejected
+    trigger: "사용자 거부 또는 증거 불충분"
+    guard: "reason 필드 필수"
+
+  - from: approved
+    to: applied
+    trigger: "실제 파일 변경 적용"
+    guard: "approved 상태 확인"
+
+  - from: applied
+    to: monitored
+    trigger: "적용 후 1회 이상 실행/검증 완료"
+    guard: "없음"
+
+  - from: monitored
+    to: stable
+    trigger: "3회 이상 정상 동작 확인 또는 릴리즈 포함"
+    guard: "regression 없음"
+
+  - from: monitored
+    to: rolled_back
+    trigger: "문제 발견"
+    guard: "reason 필드 필수"
+
+  - from: applied
+    to: rolled_back
+    trigger: "적용 직후 문제 발견"
+    guard: "reason 필드 필수"
+
+  - from: rolled_back
+    to: draft
+    trigger: "재작업 시작"
+    guard: "없음"
+
+  - from: rejected
+    to: draft
+    trigger: "재작업 시작"
+    guard: "없음"
+
+denied_transitions:
+  - from: proposed
+    to: applied
+    reason: "승인(approved) 없이 적용 금지. CG-001 위반."
+
+  - from: draft
+    to: applied
+    reason: "draft에서 바로 적용 금지."
+
+  - from: draft
+    to: proposed
+    reason: "evidence_checked를 건너뛸 수 없다."
+
+  - from: evidence_checked
+    to: applied
+    reason: "proposed → approved를 건너뛸 수 없다."
+
+degraded_mode:
+  condition: "confirm_ui capability 없음"
+  behavior: "propose_only — 제안만 생성하고 applied로 전이하지 않음"
+  max_state: proposed

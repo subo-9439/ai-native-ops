@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const MAX_THREAD_MESSAGES = 15;
+const MAX_THREAD_CONTEXT_CHARS = 6000; // 스레드 히스토리 전체 상한 (~1.5K 토큰)
 const MAX_CONTEXT_ENTRIES = 10;
 const MAX_SUMMARY_LENGTH = 500;
 const MAX_MEMORY_FILE_BYTES = 3000;   // memory-bank 각 파일 최대 3KB
@@ -36,20 +37,36 @@ async function collectThreadContext(thread) {
 
     const lines = [];
     for (const msg of sorted) {
-      const author = msg.author.bot ? '🤖 Claude' : `👤 ${msg.author.displayName}`;
-      const content = msg.content?.substring(0, 800);
-      if (!content) continue;
-      // embed 결과는 간략하게
-      if (msg.embeds?.length > 0 && !content) {
+      const author = msg.author.bot ? 'Claude' : msg.author.displayName;
+      // embed만 있고 텍스트 없는 메시지
+      if (!msg.content && msg.embeds?.length > 0) {
         lines.push(`${author}: [작업 결과 embed]`);
         continue;
       }
+      const content = msg.content?.substring(0, 800);
+      if (!content) continue;
       lines.push(`${author}: ${content}`);
     }
 
     if (lines.length === 0) return '';
 
-    return `\n[이전 대화 히스토리 — 이 스레드에서 진행된 작업 맥락]\n${lines.join('\n')}\n[히스토리 끝]\n\n`;
+    // 토큰 예산 초과 시 오래된 메시지부터 제거하고 요약 표시
+    let joined = lines.join('\n');
+    if (joined.length > MAX_THREAD_CONTEXT_CHARS) {
+      const totalMessages = lines.length;
+      // 최근 메시지를 우선 유지 — 뒤에서부터 예산 내로 채운다
+      const kept = [];
+      let budget = MAX_THREAD_CONTEXT_CHARS - 80; // 말줄임 표시 여유
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (budget - lines[i].length - 1 < 0) break;
+        budget -= lines[i].length + 1;
+        kept.unshift(lines[i]);
+      }
+      const skipped = totalMessages - kept.length;
+      joined = `(이전 메시지 ${skipped}건 생략)\n${kept.join('\n')}`;
+    }
+
+    return `\n[이전 대화 히스토리 — 이 스레드에서 진행된 작업 맥락]\n${joined}\n[히스토리 끝]\n\n`;
   } catch (err) {
     console.error('[Context] 스레드 히스토리 수집 실패:', err.message);
     return '';
@@ -85,6 +102,14 @@ function writeOpsLog(projectDir, entry) {
   }
 }
 
+function formatKstMMDDHHmm(iso) {
+  if (!iso) return '?';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '?';
+  const s = d.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+  return s.substring(5, 16);
+}
+
 /**
  * 최근 ops log 항목을 읽어서 컨텍스트 문자열 생성
  * @param {string} projectDir
@@ -109,7 +134,7 @@ function readOpsContext(projectDir) {
     if (entries.length === 0) return '';
 
     const formatted = entries.map(e => {
-      const time = e.timestamp?.substring(5, 16).replace('T', ' ') || '?';
+      const time = formatKstMMDDHHmm(e.timestamp);
       const files = e.files?.length ? ` [${e.files.join(', ')}]` : '';
       return `  [${time}] ${e.agent}: ${e.task}${files}\n    → ${e.summary}`;
     }).join('\n');

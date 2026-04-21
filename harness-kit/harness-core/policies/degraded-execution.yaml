@@ -1,0 +1,51 @@
+# degraded-execution.yaml — 기능 제한 시 실행 정책
+
+version: "1.0.0"
+
+policy:
+  name: "degraded-execution"
+  description: "하네스 기능 일부가 불가능할 때의 실행 모드와 행동을 정의한다."
+
+modes:
+  full:
+    description: "모든 기능 사용 가능"
+    condition: "모든 capability 사용 가능"
+    behavior: "정상 실행"
+
+  rules_only:
+    description: "hooks 등록 불가"
+    condition: "hooks capability 없음"
+    behavior:
+      - "rules 파일만으로 동작"
+      - "hook 강제 게이트 없음 — Claude가 자발적으로 규칙을 따라야 함"
+      - "보고서에 'hooks unavailable' 경고 기록"
+
+  manual:
+    description: "file_write 불가"
+    condition: "file_write capability 없음"
+    behavior:
+      - "모든 변경사항을 stdout으로 출력"
+      - "사람이 직접 파일을 생성/수정"
+      - "보고서도 stdout으로 출력"
+
+  report_only:
+    description: "lock 획득 실패"
+    condition: "lock capability 실패 또는 lock collision"
+    behavior:
+      - "파일 변경 없음"
+      - "보고서만 생성"
+      - "다른 프로세스가 작업 중일 수 있음을 경고"
+
+  relaxed:
+    description: "schema_validate 불가"
+    condition: "schema_validate capability 없음"
+    behavior:
+      - "스키마 검증 skip"
+      - "보고서에 'schema validation skipped' 경고 기록"
+      - "파일 생성은 정상 수행"
+
+escalation:
+  - trigger: "2개 이상 capability 동시 불가"
+    action: "manual 모드로 전환"
+  - trigger: "file_read 불가"
+    action: "하네스 실행 중단, 에러 보고"

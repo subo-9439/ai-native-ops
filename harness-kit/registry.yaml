@@ -1,0 +1,7 @@
+# harness-kit registry — 이 kit이 적용되는 서비스 repo 목록.
+# path 는 project-manager/ 와 같은 레벨 기준 상대 경로.
+targets:
+  - name: whosbuying
+    path: whosbuying
+    owner: subo-9439
+    notes: 파티 미니게임 (Flutter + Spring Boot). SSOT: 이 kit.
