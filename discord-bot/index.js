@@ -7,6 +7,7 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
 const { startAlertsWatcher, ensureAlertsChannel } = require('./alerts-watcher');
 const { startQueueWatchdog } = require('./queue-watchdog');
+const { startHealthWatcher } = require('./health-watcher');
 const { execSync } = require('child_process');
 const path = require('path');
 const statusCmd   = require('./commands/status');
@@ -118,6 +119,13 @@ client.once('clientReady', async () => {
     startQueueWatchdog(client);
   } catch (err) {
     console.error('[Bot] queue-watchdog 시작 실패:', err.message);
+  }
+
+  // 봇 자가진단 (PR-INFRA3) — 5분 주기로 safe-send/ws/queue/git/render 점검 후 실패 시 #alerts 푸시
+  try {
+    await startHealthWatcher(client);
+  } catch (err) {
+    console.error('[Bot] health-watcher 시작 실패:', err.message);
   }
 });
 
