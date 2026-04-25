@@ -1,3 +1,8 @@
+// Discord 2000자 한도 전역 가드 — Client 인스턴스 생성·send 발생 전에 patch 되어야 함.
+// (개별 safeContent 호출에 의존하면 누락된 send 한 곳에서 BASE_TYPE_MAX_LENGTH 가 다시 터진다)
+const { installSafeSendGuards } = require('./lib/safe-send');
+installSafeSendGuards();
+
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
 const { startAlertsWatcher, ensureAlertsChannel } = require('./alerts-watcher');
