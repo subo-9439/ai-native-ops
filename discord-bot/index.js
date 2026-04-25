@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
 const { startAlertsWatcher, ensureAlertsChannel } = require('./alerts-watcher');
+const { startQueueWatchdog } = require('./queue-watchdog');
 const { execSync } = require('child_process');
 const path = require('path');
 const statusCmd   = require('./commands/status');
@@ -105,6 +106,13 @@ client.once('clientReady', async () => {
     startPoller({ client });
   } catch (err) {
     console.error('[Bot] sync-poller 시작 실패:', err.message);
+  }
+
+  // 큐 watchdog — in_progress 아이템 stale 자동 알림 (15분 warn / 30분 critical)
+  try {
+    startQueueWatchdog(client);
+  } catch (err) {
+    console.error('[Bot] queue-watchdog 시작 실패:', err.message);
   }
 });
 
