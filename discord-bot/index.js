@@ -553,6 +553,15 @@ async function handleDispatchCommand(interaction) {
 const MAX_CHAIN_DEPTH = 20;
 let _chainDepth = 0;
 
+// OPS8 핫픽스(2026-04-26): Discord content 한도 2000자 안전 truncate.
+// itemList 같은 가변 길이 문자열을 send에 직접 보내면 BASE_TYPE_MAX_LENGTH로 실패. 사용 측은 항상 이 헬퍼를 거친다.
+const DISCORD_CONTENT_LIMIT = 1900;
+function safeContent(s) {
+  if (typeof s !== 'string') return s;
+  if (s.length <= DISCORD_CONTENT_LIMIT) return s;
+  return s.slice(0, DISCORD_CONTENT_LIMIT) + '\n…(잘림, 대시보드에서 전체 확인)';
+}
+
 async function dispatchToAgents(thread, taskContent) {
   // 체이닝 재귀 깊이 확인
   _chainDepth++;
@@ -723,21 +732,34 @@ async function handleQueueStart(notifyChannel) {
   const total = queue?.items?.length || 0;
   const mm = String(new Date().getMonth() + 1).padStart(2, '0');
   const dd = String(new Date().getDate()).padStart(2, '0');
-  const itemList = queue.items.map((item, i) =>
+  // OPS8 핫픽스(2026-04-26): pending만 나열 + 최대 10건 + 초과 시 카운트로 축약.
+  // 큐가 29건처럼 누적되면 itemList가 Discord content 2000자 한도를 넘어 send가 실패함.
+  const pendingItems = queue.items.filter(i => i.status === 'pending');
+  const doneCt = queue.items.filter(i => i.status === 'done').length;
+  const failedCt = queue.items.filter(i => i.status === 'failed').length;
+  const inProgressCt = queue.items.filter(i => i.status === 'in_progress').length;
+  const PENDING_PREVIEW = 10;
+  const previewLines = pendingItems.slice(0, PENDING_PREVIEW).map((item, i) =>
     `${i + 1}. **${item.id}** — ${item.title} (${item.agent})`
-  ).join('\n');
+  );
+  const overflow = pendingItems.length - PENDING_PREVIEW;
+  if (overflow > 0) previewLines.push(`…외 pending ${overflow}건`);
+  const statusLine = `📊 전체 ${total} · ✅ ${doneCt} · ⏳ pending ${pendingItems.length} · 🔄 ${inProgressCt} · ❌ ${failedCt}`;
+  const itemList = previewLines.length > 0
+    ? `${statusLine}\n${previewLines.join('\n')}`
+    : statusLine;
   const dashboardUrl = (process.env.PUBLIC_BASE_URL || 'http://localhost:4000') + '/queue';
 
   // OPS7: 호출자가 이미 스레드(CEO가 기획실에서 논의 중인 스레드)면 거기서 그대로 큐 진행.
   // 별도 스레드/메시지를 띄우면 CEO가 트리거한 위치와 큐 진행 위치가 달라져 혼란.
   if (notifyChannel.isThread && notifyChannel.isThread()) {
-    await notifyChannel.send(
+    await notifyChannel.send(safeContent(
       `📋 **큐 디스패치 시작** — ${total}개 아이템\n${itemList}\n\n📊 [실시간 대시보드](${dashboardUrl})\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `🚀 **시작** → **${next.id}** (${next.title}) · ${next.agent}\n` +
       `전체: ${total}개 · 남은 큐: ${total - 1}개\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-    );
+    ));
     console.log(`[Chain] queue start: ${next.id} in existing thread ${notifyChannel.name}`);
     await dispatchToAgents(notifyChannel, next.prompt);
     return;
@@ -752,9 +774,9 @@ async function handleQueueStart(notifyChannel) {
     return;
   }
 
-  const kickMsg = await ceoChannel.send(
+  const kickMsg = await ceoChannel.send(safeContent(
     `📋 **큐 디스패치 시작** — ${total}개 아이템\n${itemList}\n\n📊 [실시간 대시보드](${dashboardUrl})`
-  );
+  ));
 
   const thread = await kickMsg.startThread({
     name: `🔗 [${mm}/${dd}] 큐 디스패치 (${total}개)`,
