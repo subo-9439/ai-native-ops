@@ -1,6 +1,6 @@
 // Discord 2000자 한도 전역 가드 — Client 인스턴스 생성·send 발생 전에 patch 되어야 함.
 // (개별 safeContent 호출에 의존하면 누락된 send 한 곳에서 BASE_TYPE_MAX_LENGTH 가 다시 터진다)
-const { installSafeSendGuards } = require('./lib/safe-send');
+const { installSafeSendGuards, safeSend, safeReply } = require('./lib/safe-send');
 installSafeSendGuards();
 
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
@@ -231,7 +231,8 @@ client.on('messageCreate', async (message) => {
   // ── 큐 관리 명령어 (!큐상태, !큐시작, !큐중지) — 어디서든 사용 가능 ──
   const cmd = message.content.trim();
   if (cmd === '!큐상태') {
-    await message.reply(queueSummary());
+    // queueSummary 는 큐 30+ 누적 시 2000자를 쉽게 넘김 → split 전송
+    await safeReply(message, queueSummary());
     return;
   }
   if (cmd === '!큐시작') {
@@ -683,8 +684,8 @@ async function maybeAutoChain(thread, success) {
   // 다음 아이템 확인
   const next = peekNext();
   if (!next) {
-    // 전체 완료
-    await thread.send(
+    // 전체 완료 — queueSummary 가 길어 2000자 초과 가능 → split
+    await safeSend(thread,
       `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `🎉 **큐 전체 완료!** (${total}/${total})\n\n` +
       `${queueSummary()}\n\n` +
@@ -737,7 +738,8 @@ async function handleQueueStart(notifyChannel) {
     const hint = failed > 0
       ? `실패 ${failed}건이 있습니다. 재시도하려면 work-queue.json에서 해당 아이템의 \`status\`를 \`pending\`으로 되돌리고 \`!큐시작\`.`
       : `새 아이템을 추가하려면 work-queue.json에 append 후 \`!큐시작\`, 또는 CEO 기획실에서 새 지시문을 작성하세요.`;
-    await notifyChannel.send(`${header}\n\n${queueSummary()}\n\n${hint}`);
+    // queueSummary 길이 위험 → split
+    await safeSend(notifyChannel, `${header}\n\n${queueSummary()}\n\n${hint}`);
     return;
   }
 

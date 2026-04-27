@@ -5,7 +5,14 @@
 // CI 도입은 추후. 지금은 push 전 수동 실행.
 
 const assert = require('assert');
-const { installSafeSendGuards, truncate, DEFAULT_LIMIT } = require('../lib/safe-send');
+const {
+  installSafeSendGuards,
+  truncate,
+  chunkContent,
+  safeSend,
+  safeReply,
+  DEFAULT_LIMIT,
+} = require('../lib/safe-send');
 
 function fakeTarget() {
   return {
@@ -20,7 +27,7 @@ function fakeTarget() {
   };
 }
 
-function runTests() {
+async function runTests() {
   // 1. truncate 헬퍼 단위 검증
   assert.strictEqual(truncate('short', 100), 'short', 'short string passthrough');
   const long = 'x'.repeat(2500);
@@ -56,14 +63,61 @@ function runTests() {
   installSafeSendGuards();
   assert.strictEqual(MessagePayload.prototype.makeContent, before, '중복 install 무시');
 
-  console.log('OK — safe-send 가드 4 케이스 PASS');
+  // 3. chunkContent — 줄 경계 split
+  assert.deepStrictEqual(chunkContent('hello', 100), ['hello'], '한도 이하 단일 chunk');
+  assert.deepStrictEqual(chunkContent(undefined, 100), [undefined], 'undefined passthrough');
+
+  const para = (Array.from({ length: 30 }, (_, i) => `line ${i} ${'x'.repeat(80)}`)).join('\n');
+  const parts = chunkContent(para, 500);
+  assert.ok(parts.length >= 4, `30줄 문단이 ≥4 chunk 로 분할 (got ${parts.length})`);
+  for (const p of parts) {
+    assert.ok(p.length <= 500, `각 chunk ${p.length} ≤ 500`);
+  }
+  // 재결합 시 원본 줄을 모두 포함 (공백 normalize 후)
+  const reassembled = parts.join('\n');
+  for (let i = 0; i < 30; i++) {
+    assert.ok(reassembled.includes(`line ${i}`), `line ${i} 보존`);
+  }
+
+  // 4. safeSend — 단일 chunk 면 send 1회, 다중 chunk 면 순차 send + 페이지 푸터
+  const sentSingle = [];
+  const targetSingle = { send: async (c) => { sentSingle.push(c); return { id: `m${sentSingle.length}` }; } };
+  await safeSend(targetSingle, 'short content');
+  assert.strictEqual(sentSingle.length, 1, 'safeSend 단일 chunk = 1회 send');
+  assert.strictEqual(sentSingle[0], 'short content', '내용 보존');
+
+  const sentMulti = [];
+  const targetMulti = { send: async (c) => { sentMulti.push(c); return { id: `m${sentMulti.length}` }; } };
+  const longText = (Array.from({ length: 25 }, (_, i) => `paragraph ${i} ${'y'.repeat(100)}`)).join('\n\n');
+  await safeSend(targetMulti, longText, { limit: 500 });
+  assert.ok(sentMulti.length >= 4, `safeSend 분할 send (got ${sentMulti.length})`);
+  for (let i = 0; i < sentMulti.length; i++) {
+    assert.ok(sentMulti[i].length <= 500, `chunk ${i} 길이 ${sentMulti[i].length} ≤ 500`);
+    assert.ok(sentMulti[i].includes(`*(${i + 1}/${sentMulti.length})*`), `페이지 푸터 ${i + 1}/${sentMulti.length}`);
+  }
+
+  // 5. safeReply — 첫 chunk 는 reply, 나머지는 channel.send
+  const repliedFirst = [];
+  const channelRest = [];
+  const fakeMessage = {
+    reply: async (c) => { repliedFirst.push(c); return { id: 'reply1' }; },
+    channel: { send: async (c) => { channelRest.push(c); return { id: `f${channelRest.length}` }; } },
+  };
+  await safeReply(fakeMessage, longText, { limit: 500 });
+  assert.strictEqual(repliedFirst.length, 1, 'safeReply 첫 chunk = reply 1회');
+  assert.ok(channelRest.length >= 3, `safeReply 나머지 ≥3 channel.send (got ${channelRest.length})`);
+  assert.ok(repliedFirst[0].includes('*(1/'), '첫 chunk 페이지 푸터');
+
+  console.log('OK — safe-send 가드 + chunk + safeSend/Reply 케이스 PASS');
 }
 
-try {
-  runTests();
-  process.exit(0);
-} catch (err) {
-  console.error('FAIL —', err.message);
-  console.error(err.stack);
-  process.exit(1);
-}
+(async () => {
+  try {
+    await runTests();
+    process.exit(0);
+  } catch (err) {
+    console.error('FAIL —', err.message);
+    console.error(err.stack);
+    process.exit(1);
+  }
+})();
