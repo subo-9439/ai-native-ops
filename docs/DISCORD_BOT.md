@@ -150,6 +150,24 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 
 ---
 
+## 관련 도구 — Chrome 디버그 프로필 (MCP 자동화 연결)
+
+봇이 실행하는 Claude CLI가 Chrome MCP(`mcp__Claude_in_Chrome__*`, `mcp__chrome-devtools__*`)를 사용하려면 별도 디버그 프로필 Chrome이 필요하다.
+
+**핵심**: MCP가 붙는 Chrome ≠ 평소 쓰는 Chrome. 두 프로세스/프로필은 완전히 분리됨.
+
+| 항목 | 값 |
+|---|---|
+| 디버그 프로필 | `~/.chrome-debug-profile` |
+| 디버그 포트 | `9222` |
+| 검증 | `curl -s http://127.0.0.1:9222/json/version` → 200 OK |
+
+기동·SSOT 가이드: [`whosbuying/docs/AI_OPS.md` § Chrome 디버그 프로필](../../whosbuying/docs/AI_OPS.md#chrome-디버그-프로필-mcp자동화-도구-연결용)
+
+**주의**: Default 프로필 경로(`~/Library/Application Support/Google/Chrome`)로 띄우면 Chrome 136+ 보안 정책에 의해 디버그 포트가 무시됨. 반드시 비-Default `--user-data-dir` 사용.
+
+---
+
 ## 메모리 시스템 (5-Layer, Cline Memory-Bank 패턴)
 
 매번 Claude CLI를 새 프로세스로 실행하므로, 5계층으로 세션 연속성과 공용 상태를 유지.
