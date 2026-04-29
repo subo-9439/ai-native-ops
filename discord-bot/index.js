@@ -79,11 +79,33 @@ const TRIGGER_EMOJI = '🤖';
  */
 async function augmentMessageWithAttachments(message) {
   const text = message.content || '';
-  const atts = message.attachments;
-  if (!atts || atts.size === 0) return text;
+  const collected = [];
+  if (message.attachments && message.attachments.size > 0) {
+    for (const a of message.attachments.values()) collected.push({ att: a, msgId: message.id });
+  }
+
+  // 답장(reply) 형태로 보낸 경우 원본 메시지의 첨부도 같이 인식
+  const refId = message.reference?.messageId;
+  if (refId) {
+    try {
+      const ref = await message.channel.messages.fetch(refId);
+      if (ref?.attachments && ref.attachments.size > 0) {
+        for (const a of ref.attachments.values()) collected.push({ att: a, msgId: ref.id });
+        console.log(`[Attach] reply ref=${ref.id} attachments.size=${ref.attachments.size}`);
+      }
+    } catch (err) {
+      console.warn(`[Attach] reply 원본 fetch 실패 ref=${refId}: ${err.message}`);
+    }
+  }
+
+  console.log(`[Attach] msg=${message.id} channel=${message.channel?.name || '?'} attachments.size=${message.attachments?.size || 0} collected=${collected.length}`);
+  if (collected.length === 0) return text;
 
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  if (!projectDir) return text;
+  if (!projectDir) {
+    console.warn('[Attach] CLAUDE_PROJECT_DIR 미설정 — 첨부 처리 스킵');
+    return text;
+  }
 
   const dir = path.join(projectDir, '.ops', 'discord-attachments');
   try {
@@ -94,15 +116,19 @@ async function augmentMessageWithAttachments(message) {
   }
 
   const lines = [];
-  for (const att of atts.values()) {
+  for (const { att, msgId } of collected) {
     const ct = att.contentType || '';
-    if (!ct.startsWith('image/')) continue;
+    console.log(`[Attach]   - name=${att.name} contentType=${ct} size=${att.size} url=${att.url?.substring(0, 80)}`);
+    if (!ct.startsWith('image/')) {
+      console.log(`[Attach]   → 스킵 (image/* 아님)`);
+      continue;
+    }
     if (att.size && att.size > 25 * 1024 * 1024) {
       lines.push(`- (스킵: ${att.name} — 25MB 초과)`);
       continue;
     }
     const safeName = (att.name || `att-${att.id}`).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const local = path.join(dir, `${message.id}-${safeName}`);
+    const local = path.join(dir, `${msgId}-${safeName}`);
     try {
       const res = await fetch(att.url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
