@@ -61,6 +61,8 @@ nolza-dev/
 - 아이디어 검토, 기술 실현 가능성, 공수 판단, 대안 제시
 - 합의된 작업은 디스패치 형식으로 정리해서 제안
 - CEO 결정사항은 `decisions.md`에 자동 기록
+- **이미지 첨부 지원** (2026-04-29~): 메시지에 스크린샷·이미지 첨부 시 봇이 attachment 를 로컬(`.ops/discord-attachments/`)에 다운로드해 절대 경로를 Claude 프롬프트에 주입 → Read 툴로 vision 인식. AdSense 콘솔, 에러 로그, UI 버그 스샷을 텍스트로 풀어쓸 필요 없음. (지원 형식: png/jpg/gif/webp)
+- **답장(Reply) 형태 첨부 인식** (2026-04-29~): Discord 답장 기능으로 원본 메시지의 이미지에 텍스트만 답장해도 봇이 `message.reference.messageId` 를 fetch 해 원본 첨부를 합쳐서 인식. "이거 봐봐" 같은 짧은 follow-up 사용 가능.
 
 ### 2️⃣ 디스패치 모드
 `---BE---` / `---FE---` / `---AI---` 섹션 포함 → 각 에이전트에 **병렬 실행**.
@@ -212,3 +214,22 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 - 클릭 시 `https://admin.nolza.org/admin/wiki` 즉시 진입
 
 직접 접속 (브라우저): `https://admin.nolza.org/admin/wiki` → admin / password
+
+---
+
+## 변경 이력 (Versions)
+
+운영봇 주요 버전업. 최근순.
+
+| 날짜 | 커밋 | 변경 |
+|------|------|------|
+| 2026-04-29 | `3180ea7` | 답장(Reply) 형태 메시지의 원본 첨부 자동 fetch — `message.reference.messageId` 로 원본 가져와 attachments 병합 |
+| 2026-04-29 | `c0580ba` | Discord 이미지 첨부 → 로컬 다운로드 후 절대경로를 Claude 프롬프트에 주입 (Read 툴 vision 인식) |
+| 2026-04-29 | `60f75c3` | Discord 2000자 초과 reply 자동 split 전송 (`safeSend` / `safeReply` 헬퍼) |
+| 2026-04-28 | `cfcd258` | PR-INFRA3 봇 자가진단 — 5분 cron + Render 상태 + CI 게이트 |
+| 2026-04-28 | `99fcf9b` | PR-INFRA2 Discord 2000자 한도 전역 가드 (`MessagePayload.makeContent` 패치) |
+| 2026-04-28 | `c131355` | PR-INFRA1 큐 watchdog — 15분 warn / 30분 critical 자동 알림 |
+| 2026-04-27 | `c19012f` | `alerts-watcher` — `#🚨-alerts` 자동 생성 + docker health 알림 |
+| 2026-04-27 | `c1cc175` | Discord 봇 권한 강화 — 정책 검증 모듈 도입 |
+
+세부 변경은 `project-manager/` 레포 `git log discord-bot/` 참조.
