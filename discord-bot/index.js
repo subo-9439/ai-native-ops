@@ -10,6 +10,7 @@ const { startQueueWatchdog } = require('./queue-watchdog');
 const { startHealthWatcher } = require('./health-watcher');
 const { execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const statusCmd   = require('./commands/status');
 const roomsCmd    = require('./commands/rooms');
 const closeRoomCmd = require('./commands/close-room');
@@ -66,6 +67,57 @@ const AGENT_CHANNELS = new Map([
 const CEO_CHANNEL = process.env.CEO_CHANNEL_NAME || '👔-ceo기획실';
 const DISPATCH_CHANNELS = new Set([CEO_CHANNEL]);
 const TRIGGER_EMOJI = '🤖';
+
+/**
+ * Discord 메시지에 첨부된 이미지를 로컬 파일로 다운받아 userMessage 에 경로를 append.
+ * Claude Code Read 툴이 PNG/JPG 등을 네이티브로 읽으므로, 본문 끝에 절대경로를 적어주면
+ * 에이전트가 vision 으로 이미지를 인식할 수 있다.
+ *
+ * - 저장 위치: $CLAUDE_PROJECT_DIR/.ops/discord-attachments/<msgId>-<fileName>
+ * - .ops/ 는 .gitignore 에 등록돼 커밋되지 않음.
+ * - 25MB 초과 또는 image/* 가 아닌 파일은 스킵.
+ */
+async function augmentMessageWithAttachments(message) {
+  const text = message.content || '';
+  const atts = message.attachments;
+  if (!atts || atts.size === 0) return text;
+
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (!projectDir) return text;
+
+  const dir = path.join(projectDir, '.ops', 'discord-attachments');
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+  } catch (err) {
+    console.error('[Bot] 첨부 디렉토리 생성 실패:', err.message);
+    return text;
+  }
+
+  const lines = [];
+  for (const att of atts.values()) {
+    const ct = att.contentType || '';
+    if (!ct.startsWith('image/')) continue;
+    if (att.size && att.size > 25 * 1024 * 1024) {
+      lines.push(`- (스킵: ${att.name} — 25MB 초과)`);
+      continue;
+    }
+    const safeName = (att.name || `att-${att.id}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const local = path.join(dir, `${message.id}-${safeName}`);
+    try {
+      const res = await fetch(att.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      await fs.promises.writeFile(local, buf);
+      lines.push(`- ${local}`);
+    } catch (err) {
+      console.error(`[Bot] 첨부 다운로드 실패 (${att.name}):`, err.message);
+      lines.push(`- (다운로드 실패: ${att.name})`);
+    }
+  }
+
+  if (lines.length === 0) return text;
+  return `${text}\n\n[첨부 이미지 — Read 툴로 해당 경로 파일을 읽어 내용을 확인할 것]\n${lines.join('\n')}`;
+}
 
 // ─── 봇 준비 ─────────────────────────────────────────────
 client.once('clientReady', async () => {
@@ -300,7 +352,7 @@ client.on('messageCreate', async (message) => {
   if (message.content.startsWith('/')) return;
 
   const channelName = message.channel.name;
-  const userMessage = message.content;
+  const userMessage = await augmentMessageWithAttachments(message);
 
   // ── CEO 기획실: ---BE---/---FE---/---AI--- 있으면 디스패치, 없으면 대화 모드 ──
   if (DISPATCH_CHANNELS.has(channelName)) {
