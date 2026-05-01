@@ -241,6 +241,7 @@ WebSocket STOMP /topic/rooms/{code}/chat 구현, ChatMessage DTO 추가
 
 | 날짜 | 커밋 | 변경 |
 |------|------|------|
+| 2026-05-01 | (decision) | **Render 호스팅 폐기** — 항시 운영 전환으로 봇 재시작 명령 불필요. 디스패치 추적은 sync-writer(`.ops/context.jsonl`) + `dispatch_sla_check.py` 단독. Render 콘솔에서 서비스 삭제 완료. |
 | 2026-04-29 | `3180ea7` | 답장(Reply) 형태 메시지의 원본 첨부 자동 fetch — `message.reference.messageId` 로 원본 가져와 attachments 병합 |
 | 2026-04-29 | `c0580ba` | Discord 이미지 첨부 → 로컬 다운로드 후 절대경로를 Claude 프롬프트에 주입 (Read 툴 vision 인식) |
 | 2026-04-29 | `60f75c3` | Discord 2000자 초과 reply 자동 split 전송 (`safeSend` / `safeReply` 헬퍼) |
