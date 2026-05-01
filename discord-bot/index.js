@@ -664,6 +664,12 @@ async function dispatchToAgents(thread, taskContent) {
     return;
   }
 
+  // SLA 시계용 dispatch_id (claude-sync events.jsonl 의 pending/done 매칭 키)
+  const dispatchId = `disp-${Date.now().toString(36)}-${(thread.id || 'na').slice(-6)}`;
+  let dispatchPending = false;
+  let dispatchAllOk = false;
+  let dispatchTargetsLabel = '';
+
   try {
 
   const sections = parseDispatchSections(taskContent);
@@ -676,6 +682,7 @@ async function dispatchToAgents(thread, taskContent) {
 
   // 시작 요약 메시지
   const targetLabels = targets.map(t => CHANNEL_LABELS[t.channelName] || t.channelName).join('  |  ');
+  dispatchTargetsLabel = targets.map(t => t.channelName).join(',');
   const preview = taskContent.substring(0, 400);
   await thread.send(
     `📋 **CEO 기획실 디스패치**\n` +
@@ -683,8 +690,16 @@ async function dispatchToAgents(thread, taskContent) {
     `**지시문:**\n\`\`\`\n${preview}${taskContent.length > 400 ? '\n...(생략)' : ''}\n\`\`\``
   );
 
+  // SLA 시계 시작 — claude-sync events.jsonl 에 pending 마커 기록
+  dispatchPending = true;
+  recordDiscordEvent('decision', {
+    agent: 'ceo',
+    threadId: thread.id || null,
+    summary: `[dispatch_pending] id=${dispatchId} channels=${dispatchTargetsLabel}`,
+  });
+
   // 병렬 실행
-  console.log(`[Dispatch] ${targets.map(t => t.channelName).join(', ')} 병렬 시작`);
+  console.log(`[Dispatch] ${targets.map(t => t.channelName).join(', ')} 병렬 시작 (id=${dispatchId})`);
   const results = await Promise.allSettled(
     targets.map(t => runClaudeToThread(thread, t.prompt, t.channelName))
   );
@@ -702,6 +717,7 @@ async function dispatchToAgents(thread, taskContent) {
   // 전체 완료 요약
   const succeeded = results.filter(r => r.status === 'fulfilled').length;
   const allOk = succeeded === results.length;
+  dispatchAllOk = allOk;
   await thread.send(
     `${allOk ? '✅' : '⚠️'} **전체 완료** — ${succeeded}/${results.length} 에이전트 성공\n` +
     `이 스레드에서 결과를 확인하고 추가 지시를 입력하세요.`
@@ -711,6 +727,14 @@ async function dispatchToAgents(thread, taskContent) {
   await maybeAutoChain(thread, allOk);
 
   } finally {
+    // SLA 시계 종료 — pending 마커가 남았으면 done 마커로 매칭 해제
+    if (dispatchPending) {
+      recordDiscordEvent('decision', {
+        agent: 'ceo',
+        threadId: thread.id || null,
+        summary: `[dispatch_done] id=${dispatchId} success=${dispatchAllOk} channels=${dispatchTargetsLabel}`,
+      });
+    }
     _chainDepth--;
   }
 }
