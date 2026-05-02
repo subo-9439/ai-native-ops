@@ -550,53 +550,58 @@ async function runClaude(interaction, userMessage, opts = {}) {
 /**
  * 메시지 내용 기반 에이전트 자동 라우팅
  */
+// SSOT: whosbuying/.claude/agents/_router.json
+// CLI(claudew) / Bridge MCP 와 동일 라우팅. fallback 시 인라인 키워드 사용.
+let _routerCache = null;
+function _loadRouter() {
+  if (_routerCache) return _routerCache;
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const routerPath = path.resolve(
+      __dirname,
+      '../../../whosbuying/.claude/agents/_router.json'
+    );
+    _routerCache = require(routerPath);
+  } catch (exc) {
+    process.stderr.write(`[bot/router] SSOT load failed (${exc.message}); using inline fallback\n`);
+    _routerCache = {
+      default: 'claude-dev',
+      agents: {
+        'backend-dev': {
+          keywords: ['spring', 'backend', '백엔드', 'server', '서버', 'api', 'java', 'kotlin', 'redis', 'rabbitmq', 'mariadb', 'websocket', 'stomp', 'controller', 'jpa', 'entity', 'dto', 'docker', 'gradle', '로비', 'lobby', '데이터베이스', 'database', '배포', 'deploy', 'endpoint', 'game_project_server'],
+          globs: [],
+        },
+        'frontend-dev': {
+          keywords: ['flutter', 'dart', '프론트', 'frontend', '화면', 'screen', '페이지', 'page', 'ui', 'ux', '앱', '위젯', 'widget', 'riverpod', '버튼', 'button', '레이아웃', 'layout', '애니메이션', 'animation', '스타일', 'style', '색상', 'color', 'game_project_app', 'game_project_web'],
+          globs: [],
+        },
+      },
+    };
+  }
+  return _routerCache;
+}
+
 function resolveAgentFromContent(userMessage, override) {
   if (override) return override;
 
+  const router = _loadRouter();
   const msg = (userMessage || '').toLowerCase();
+  const scores = {};
 
-  const BE_KEYWORDS = [
-    'spring', 'springboot', 'spring boot',
-    '백엔드', 'backend', 'be ',
-    '서버', 'server', 'api ', '/api',
-    'game_project_server',
-    'java', 'kotlin',
-    'redis', 'rabbitmq', 'mariadb', 'mysql',
-    'websocket', 'stomp', 'rest',
-    '컨트롤러', 'controller',
-    '서비스 레이어', 'service layer',
-    '레포지토리', 'repository',
-    'jpa', 'entity', '엔티티', 'dto',
-    'docker', 'gradle', 'maven',
-    '로비', 'lobby', '방 생성', '방생성', '게임서버',
-    '데이터베이스', 'database', 'db ',
-    '배포', 'deploy', 'endpoint', '엔드포인트',
-  ];
+  for (const [agent, def] of Object.entries(router.agents || {})) {
+    let score = 0;
+    for (const kw of def.keywords || []) {
+      if (msg.includes(kw.toLowerCase())) score += 1;
+    }
+    if (score > 0) scores[agent] = score;
+  }
 
-  const FE_KEYWORDS = [
-    'flutter', 'dart',
-    '프론트', 'frontend', 'fe ',
-    '화면', 'screen', '페이지', 'page',
-    'ui ', 'ux ',
-    '앱', ' app', '위젯', 'widget',
-    'game_project_app', 'game_project_web',
-    'riverpod', 'provider',
-    '버튼', 'button',
-    '레이아웃', 'layout',
-    '애니메이션', 'animation',
-    '스타일', 'style', '색상', 'color', '폰트', 'font',
-    '뷰', 'view', '탭', 'tab',
-    '로딩', 'loading', '스피너', 'spinner',
-    '다이얼로그', 'dialog', '모달', 'modal',
-    '스크롤', 'scroll', '리스트', 'listview',
-  ];
-
-  const beScore = BE_KEYWORDS.filter(kw => msg.includes(kw)).length;
-  const feScore = FE_KEYWORDS.filter(kw => msg.includes(kw)).length;
-
-  if (beScore > feScore && beScore > 0) return 'backend-dev';
-  if (feScore > beScore && feScore > 0) return 'frontend-dev';
-  return 'claude-dev';
+  const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  // 봇 기존 동작 보존: 매칭 없거나 동률이면 'claude-dev'
+  if (ranked.length === 0) return 'claude-dev';
+  if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return 'claude-dev';
+  return ranked[0][0];
 }
 
 function resolveChannelName(interaction, override) {
