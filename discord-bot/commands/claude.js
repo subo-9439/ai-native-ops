@@ -631,6 +631,8 @@ module.exports = {
   SKILLS,
   resolveChannelName,
   resolveAgentFromContent,
+  // CLI 어댑터(whosbuying/bin/claudew) 가 동일 컨텍스트 주입에 사용
+  AGENT_CONTEXTS,
 
   async execute(interaction) {
     const message = interaction.options.getString('message');
