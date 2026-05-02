@@ -107,16 +107,18 @@ function renderPage(body, title = '문서 위키') {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title} — whosbuying docs</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github.min.css">
 <style>
-  :root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3;
-          --muted: #8b949e; --accent: #58a6ff; --accent2: #3fb950; }
+  :root { --bg: #ffffff; --surface: #f6f8fa; --surface-2: #eff2f5; --border: #d0d7de; --text: #1f2328;
+          --muted: #656d76; --accent: #0969da; --accent2: #1a7f37;
+          --sidebar-bg: #f6f8fa; --read-bg: #ffffff; --read-text: #24292f; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+         background: var(--bg); color: var(--text); display: flex; min-height: 100vh;
+         -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 
   /* 사이드바 */
-  .sidebar { width: 280px; background: var(--surface); border-right: 1px solid var(--border);
+  .sidebar { width: 280px; background: var(--sidebar-bg); border-right: 1px solid var(--border);
              padding: 20px 16px; overflow-y: auto; position: fixed; top: 0; bottom: 0; }
   .sidebar h1 { font-size: 18px; margin-bottom: 8px; }
   .sidebar h1 a { color: var(--text); text-decoration: none; }
@@ -129,36 +131,44 @@ function renderPage(body, title = '문서 위키') {
   .nav-item { display: block; padding: 6px 10px; color: var(--muted); text-decoration: none;
               font-size: 13px; border-radius: 4px; margin-bottom: 2px;
               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nav-item:hover { background: var(--bg); color: var(--text); }
-  .nav-item.active { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .nav-item:hover { background: var(--surface-2); color: var(--text); }
+  .nav-item.active { background: rgba(9,105,218,0.12); color: var(--accent); font-weight: 600; }
   .nav-date { color: var(--muted); font-size: 10px; float: right; margin-top: 2px; }
 
   /* 메인 */
-  .main { margin-left: 280px; flex: 1; padding: 40px 48px; max-width: 900px; }
-  .main h1 { font-size: 28px; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
-  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .main { margin-left: 280px; flex: 1; padding: 48px 56px 80px; max-width: 920px;
+          background: var(--read-bg); color: var(--read-text); }
+  .main h1 { font-size: 30px; margin-bottom: 10px; border-bottom: 1px solid var(--border);
+             padding-bottom: 14px; letter-spacing: -0.01em; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
   .meta span { margin-right: 16px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px;
-           background: rgba(63,185,80,0.15); color: var(--accent2); }
+           background: rgba(26,127,55,0.12); color: var(--accent2); font-weight: 600; }
 
-  /* 마크다운 */
-  .md h1, .md h2, .md h3 { margin: 24px 0 12px; }
-  .md h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  .md h3 { font-size: 17px; }
-  .md p { line-height: 1.7; margin-bottom: 14px; }
-  .md ul, .md ol { padding-left: 24px; margin-bottom: 14px; }
-  .md li { margin-bottom: 4px; line-height: 1.6; }
-  .md pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-            padding: 16px; overflow-x: auto; margin-bottom: 16px; }
-  .md code { font-family: 'SF Mono', Menlo, monospace; font-size: 13px; }
-  .md :not(pre) > code { background: var(--surface); padding: 2px 6px; border-radius: 4px; }
-  .md table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-  .md th, .md td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
-  .md th { background: var(--surface); }
-  .md a { color: var(--accent); }
-  .md blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0;
-                   color: var(--muted); background: var(--surface); border-radius: 0 6px 6px 0; }
-  .md hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  /* 마크다운 — 읽기 우선 (16px / line-height 1.8) */
+  .md { font-size: 16px; color: var(--read-text); }
+  .md h1, .md h2, .md h3 { margin: 32px 0 14px; color: #0f172a; letter-spacing: -0.01em; }
+  .md h2 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .md h3 { font-size: 18px; }
+  .md p { line-height: 1.8; margin-bottom: 16px; color: var(--read-text); }
+  .md ul, .md ol { padding-left: 26px; margin-bottom: 16px; }
+  .md li { margin-bottom: 6px; line-height: 1.75; }
+  .md strong { color: #0f172a; font-weight: 700; }
+  .md pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+            padding: 16px; overflow-x: auto; margin-bottom: 18px; font-size: 13.5px; line-height: 1.6; }
+  .md code { font-family: 'SF Mono', Menlo, 'Consolas', monospace; font-size: 13.5px; }
+  .md :not(pre) > code { background: var(--surface); padding: 2px 6px; border-radius: 4px;
+                         color: #cf222e; border: 1px solid rgba(208,215,222,0.6); }
+  .md table { border-collapse: collapse; width: 100%; margin-bottom: 18px; font-size: 14px; }
+  .md th, .md td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; line-height: 1.6; }
+  .md th { background: var(--surface); font-weight: 700; }
+  .md tr:nth-child(even) td { background: #fafbfc; }
+  .md a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(9,105,218,0.25); }
+  .md a:hover { border-bottom-color: var(--accent); }
+  .md blockquote { border-left: 4px solid var(--accent); padding: 10px 18px; margin: 16px 0;
+                   color: #475569; background: var(--surface); border-radius: 0 8px 8px 0; }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+  .md img { max-width: 100%; border-radius: 6px; }
 
   /* 인덱스 카드 */
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 16px; }
@@ -196,11 +206,11 @@ function renderPage(body, title = '문서 위키') {
   .cal-day { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
   .cal-cell.sun .cal-day { color: #f85149; }
   .cal-cell.sat .cal-day { color: #58a6ff; }
-  .cal-doc { display: block; padding: 4px 6px; background: var(--bg);
+  .cal-doc { display: block; padding: 4px 6px; background: #ffffff;
              border-radius: 4px; font-size: 11px; color: var(--text);
              text-decoration: none; white-space: nowrap; overflow: hidden;
-             text-overflow: ellipsis; border-left: 2px solid var(--accent); }
-  .cal-doc:hover { background: rgba(88,166,255,0.15); }
+             text-overflow: ellipsis; border-left: 2px solid var(--accent); border: 1px solid var(--border); border-left-width: 2px; }
+  .cal-doc:hover { background: rgba(9,105,218,0.08); }
   .cal-doc-cat { display: block; color: var(--muted); font-size: 9px;
                  text-transform: uppercase; margin-bottom: 1px; }
 
@@ -208,7 +218,7 @@ function renderPage(body, title = '문서 위키') {
   .tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
   .tab { padding: 6px 14px; border-radius: 16px; font-size: 13px; cursor: pointer;
          background: var(--surface); border: 1px solid var(--border); color: var(--muted); text-decoration: none; }
-  .tab:hover, .tab.active { background: rgba(88,166,255,0.15); color: var(--accent); border-color: var(--accent); }
+  .tab:hover, .tab.active { background: rgba(9,105,218,0.12); color: var(--accent); border-color: var(--accent); }
 
   @media (max-width: 768px) {
     .sidebar { position: static; width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
@@ -229,6 +239,16 @@ document.querySelector('.sidebar input')?.addEventListener('input', function(e) 
     c.style.display = c.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
+// marked 가 mermaid 코드블록을 pre code.language-mermaid 로 렌더링 → mermaid.run 이 먹게 pre.mermaid 로 변환
+document.querySelectorAll('pre code.language-mermaid').forEach(el => {
+  const pre = el.parentElement;
+  pre.className = 'mermaid';
+  pre.textContent = el.textContent;
+});
+</script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
 </script>
 </body>
 </html>`;
