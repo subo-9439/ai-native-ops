@@ -1,46 +1,93 @@
 /**
  * pre-tool-gate.js — Discord 봇 PreExecute 게이트
- * Claude Code의 pre_tool_gate.py 정책을 JavaScript로 구현
  *
- * 민감 경로 접근과 파괴 명령을 차단한다.
+ * 정책 SSOT: whosbuying/.agent/harness/policies/sensitive-paths.yaml
+ * Python(pre_tool_gate.py) 과 동일 yaml 을 로드하여 패턴 fork 를 방지한다.
  *
  * 실패 코드:
  *   HG001: sensitive path denied
  *   HG002: dangerous command denied
+ *
+ * yaml 로드 실패 시 fail-open(degraded) — 인라인 fallback 패턴 사용.
+ * 운영 차단보다 운영 가능성 우선 (CLAUDE.md 6조).
  */
 
-// ── 민감 경로 패턴 ──────────────────────────────────────────
-const SENSITIVE_PATTERNS = [
-  /\.env($|\.)/i,
-  /secrets[/\\]/i,
-  /credentials?[/\\]/i,
-  /\.pem$/i,
-  /\.key$/i,
-  /\.p12$/i,
-  /\.pfx$/i,
-  /\.jks$/i,
-  /id_rsa/i,
-  /id_ed25519/i,
-  /token\.json/i,
-  /service\.account\.json/i,
-  /application-local\.yml$/i,
-];
+const fs = require('fs');
+const path = require('path');
 
-// ── 파괴 명령 패턴 ──────────────────────────────────────────
-const DANGEROUS_PATTERNS = [
-  /\brm\s+(-\w*r\w*f|--force).*\b/i,
-  /\brm\s+-rf\b/i,
-  /\bgit\s+reset\s+--hard\b/i,
-  /\bgit\s+clean\s+-[dfx]+\b/i,
-  /\bgit\s+checkout\s+--\s+\./i,
-  /\bgit\s+push\s+.*--force\b/i,
-  /\bdel\s+\/[fFqQsS]/i,
-  /\bformat\s+[a-zA-Z]:/i,
-  /\bdrop\s+database\b/i,
-  /\bdrop\s+table\b/i,
-  /\btruncate\s+table\b/i,
-  /\bsudo\s+rm\b/i,
-];
+// ── SSOT 로더 (의존성 없는 minimal yaml list 파서) ────────────
+const POLICY_PATH = path.resolve(
+  __dirname,
+  '../../whosbuying/.agent/harness/policies/sensitive-paths.yaml'
+);
+
+function _extractYamlList(text, section) {
+  // 라인 단위 파싱: section 헤더(`<section>:`)부터 다음 top-level key(또는 EOF)까지의
+  // '- ...' 라인을 수집. 들여쓰기 있는 '- '만 항목으로 인정.
+  const lines = text.split('\n');
+  const out = [];
+  let inSection = false;
+  for (const raw of lines) {
+    if (raw.match(new RegExp(`^${section}:\\s*$`))) {
+      inSection = true;
+      continue;
+    }
+    if (!inSection) continue;
+    // 다음 top-level key (들여쓰기 없는 'key:') 만나면 종료
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*:\s*/.test(raw)) break;
+    const t = raw.trim();
+    if (!t || t.startsWith('#')) continue;
+    if (!t.startsWith('- ') && t !== '-') continue;
+    let val = t.slice(1).trim();
+    if (
+      (val.startsWith("'") && val.endsWith("'")) ||
+      (val.startsWith('"') && val.endsWith('"'))
+    ) {
+      val = val.slice(1, -1);
+    }
+    if (val) out.push(val);
+  }
+  return out.length ? out : null;
+}
+
+function _loadPolicy() {
+  const fallback = {
+    sensitive: [
+      /\.env($|\.)/i,
+      /secrets[/\\]/i,
+      /credentials?[/\\]/i,
+      /\.pem$/i,
+      /\.key$/i,
+      /id_rsa/i,
+      /id_ed25519/i,
+    ],
+    dangerous: [
+      /\brm\s+-rf\b/i,
+      /\bgit\s+reset\s+--hard\b/i,
+      /\bgit\s+push\s+.*--force\b/i,
+      /\bsudo\s+rm\b/i,
+    ],
+  };
+  try {
+    const text = fs.readFileSync(POLICY_PATH, 'utf8');
+    const sensitive = _extractYamlList(text, 'sensitive_paths');
+    const dangerous = _extractYamlList(text, 'dangerous_commands');
+    if (!sensitive || !dangerous) throw new Error('empty policy lists');
+    return {
+      sensitive: sensitive.map((p) => new RegExp(p, 'i')),
+      dangerous: dangerous.map((p) => new RegExp(p, 'i')),
+    };
+  } catch (exc) {
+    process.stderr.write(
+      `[pre-tool-gate] policy load failed (${exc.message}); using fallback patterns\n`
+    );
+    return fallback;
+  }
+}
+
+const _policy = _loadPolicy();
+const SENSITIVE_PATTERNS = _policy.sensitive;
+const DANGEROUS_PATTERNS = _policy.dangerous;
 
 /**
  * 경로가 민감한 패턴과 일치하는지 확인
@@ -129,4 +176,7 @@ module.exports = {
   validateUserMessage,
   checkSensitivePath,
   checkDangerousCommand,
+  // 패턴 노출(검증/diff 용도)
+  SENSITIVE_PATTERNS,
+  DANGEROUS_PATTERNS,
 };
