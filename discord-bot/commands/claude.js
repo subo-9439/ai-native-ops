@@ -46,12 +46,58 @@ function getModelForRole(role) {
 }
 
 /** Claude CLI args 배열 생성 (모델 플래그 포함) */
-function buildClaudeArgs(role) {
+function buildClaudeArgs(role, opts = {}) {
   const args = ['--print', '--dangerously-skip-permissions'];
   const model = getModelForRole(role);
   if (model) args.push('--model', model);
+  // PR-PLAN1: plan 모드 — 코드 변경 도구 차단, 읽기 전용만 허용.
+  // Edit/Write/NotebookEdit 미허용 + Bash 는 read-only 패턴만.
+  if (opts.plan) {
+    args.push(
+      '--allowedTools',
+      'Read,Glob,Grep,WebFetch,WebSearch,Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(ls:*),Bash(find:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*)'
+    );
+  }
   return args;
 }
+
+/**
+ * PR-PLAN1: Plan 모드 system prompt — 코드/파일 변경 금지, 양식 강제.
+ * /plan 슬래시 + dispatch 앞 plan-check 양쪽에서 재사용.
+ */
+const PLAN_CONTEXT = `[역할: 기획/계획 검토 에이전트 — 읽기 전용]
+
+[중대 제약]
+- 절대 파일을 수정하거나 생성하지 않는다 (Edit/Write/NotebookEdit 사용 금지).
+- 절대 git commit / push / 배포 / 컨테이너 기동을 하지 않는다.
+- Read/Glob/Grep/WebFetch + read-only Bash 만 사용한다.
+- 결과는 아래 양식대로 한글로 출력한다.
+
+[출력 양식 — 이 순서대로]
+## 🎯 목표
+사용자 의도 한 줄 요약.
+
+## 📂 영향 받는 파일/모듈
+- path/to/file.ext — 어떤 변경 (수정/추가/삭제 추정)
+
+## 🪜 단계별 계획
+1. 단계 (예상 시간 / 위험도)
+2. ...
+
+## ⚠️ 위험 / 미정
+- 모호한 부분, 결정 필요한 분기점
+
+## 🧪 검증 방법
+- 테스트, 수동 확인 절차
+
+## ⏱ 예상 작업 시간
+짧음 (<30분) / 보통 (~2h) / 김 (>1일)
+
+[작업 지시]
+다음 사용자 요청에 대해 위 양식으로 계획만 출력하라. 실제 변경은 절대 하지 않는다.
+
+`;
+
 
 /**
  * 통합 개발 에이전트 컨텍스트 — 모든 dev 작업이 동일한 컨텍스트를 사용
@@ -343,10 +389,13 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) throw new Error('CLAUDE_PROJECT_DIR 환경변수 없음');
 
-  let contextPrefix = AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['dev'];
+  // PR-PLAN1: plan 모드 — PLAN_CONTEXT 로 교체. 코드 변경 도구는 args 에서도 차단.
+  let contextPrefix = opts.plan
+    ? PLAN_CONTEXT
+    : (AGENT_CONTEXTS[channelName] || AGENT_CONTEXTS['dev']);
 
-  // CEO 역할일 때 큐 상태 동적 주입
-  if (channelName === 'ceo') {
+  // CEO 역할일 때 큐 상태 동적 주입 (plan 모드는 큐 무관 — skip)
+  if (channelName === 'ceo' && !opts.plan) {
     const queue = loadQueue();
     if (queue?.items?.length > 0) {
       const qStatus = getQueueSummary();
@@ -397,7 +446,7 @@ async function runClaudeToThread(thread, userMessage, channelName, opts = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       'claude',
-      buildClaudeArgs(channelName),
+      buildClaudeArgs(channelName, { plan: opts.plan }),
       { cwd: projectDir, env: process.env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] }
     );
 
@@ -638,6 +687,7 @@ module.exports = {
   resolveAgentFromContent,
   // CLI 어댑터(whosbuying/bin/claudew) 가 동일 컨텍스트 주입에 사용
   AGENT_CONTEXTS,
+  PLAN_CONTEXT,
 
   async execute(interaction) {
     const message = interaction.options.getString('message');
@@ -657,5 +707,39 @@ module.exports = {
     await interaction.deferReply();
     const channelName = resolveAgentFromContent(target || skillMessage);
     await runClaude(interaction, skillMessage, { channelName });
+  },
+
+  /**
+   * PR-PLAN1: /plan <task>
+   * Read-only Claude 호출 — 코드 변경 없이 계획만 출력.
+   * dispatch 와 같은 폼이지만 plan: true 옵션으로 도구 제한 + system prompt 강제.
+   */
+  async executePlan(interaction) {
+    const message = interaction.options.getString('task');
+    await interaction.deferReply();
+
+    // 스레드 생성 — plan 결과를 스레드에 스트리밍
+    const mm = String(new Date().getMonth() + 1).padStart(2, '0');
+    const dd = String(new Date().getDate()).padStart(2, '0');
+    const head = message.split('\n')[0].substring(0, 50);
+    const threadName = `📋 [plan ${mm}/${dd}] ${head}`;
+
+    let thread;
+    try {
+      const reply = await interaction.editReply(`📋 **plan 모드** — \`${head}\` 계획 수립 중…`);
+      thread = await reply.startThread({ name: threadName, autoArchiveDuration: 1440 });
+    } catch (err) {
+      await interaction.editReply(`❌ 스레드 생성 실패: ${err.message}`);
+      return;
+    }
+
+    const result = await runClaudeToThread(thread, message, 'ceo', { plan: true });
+    await thread.send({
+      embeds: [buildResultEmbed('ceo', `📋 plan — ${result.label}`, result.buffer, result.timedOut)],
+    });
+    await thread.send(
+      '플랜만 수행했습니다. 실행하려면 이 스레드에 `---BE---/---FE---/---AI---` 형식으로 디스패치하거나, ' +
+      '`#👔-ceo기획실` 채널에 같은 형식으로 보내세요.'
+    );
   },
 };

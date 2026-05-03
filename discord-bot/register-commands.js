@@ -62,10 +62,20 @@ const commands = [
   // ─── CEO 기획실 병렬 dispatch ────────────────────────────
   new SlashCommandBuilder()
     .setName('dispatch')
-    .setDescription('👔 BE/FE/AI 병렬 디스패치 (---BE---/---FE---/---AI--- 섹션)')
+    .setDescription('👔 BE/FE/AI 병렬 디스패치 (---BE---/---FE---/---AI--- 섹션, plan-check 후 승인)')
     .addStringOption(opt =>
       opt.setName('directive')
         .setDescription('---BE--- / ---FE--- / ---AI--- 섹션 구분자로 각 역할 지정')
+        .setRequired(true)
+    ),
+
+  // ─── 계획 모드 (read-only) ───────────────────────────────
+  new SlashCommandBuilder()
+    .setName('plan')
+    .setDescription('📋 계획만 수립 (코드 변경 없음, read-only)')
+    .addStringOption(opt =>
+      opt.setName('task')
+        .setDescription('기획/검토할 작업 — 영향 파일·단계·위험·예상 시간을 양식대로 출력')
         .setRequired(true)
     ),
 

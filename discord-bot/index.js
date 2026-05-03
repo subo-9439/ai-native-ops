@@ -3,7 +3,14 @@
 const { installSafeSendGuards, safeSend, safeReply } = require('./lib/safe-send');
 installSafeSendGuards();
 
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ButtonBuilder,
+  ActionRowBuilder,
+  ButtonStyle,
+} = require('discord.js');
 const { startInteractionServer } = require('./interaction-server');
 const { startAlertsWatcher, ensureAlertsChannel } = require('./alerts-watcher');
 const { startQueueWatchdog } = require('./queue-watchdog');
@@ -26,6 +33,7 @@ const {
   executeBackend,
   executeFrontend,
   executeSkill,
+  executePlan,
 } = require('./commands/claude');
 const docsCmd     = require('./commands/docs');
 const {
@@ -266,6 +274,7 @@ async function routeCommand(commandName, interaction) {
     case 'deploy':     await deployCmd.execute(interaction, ctx);    break;
     case 'dev':        await claudeExecute(interaction);             break;
     case 'skill':      await executeSkill(interaction);              break;
+    case 'plan':       await executePlan(interaction);               break;
     case 'docs':       await docsCmd.execute(interaction);           break;
     case 'dispatch':   await handleDispatchCommand(interaction);     break;
     default:
@@ -287,6 +296,38 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
     return;
+  }
+
+  // PR-PLAN1: dispatch plan-check 승인/취소 버튼
+  if (interaction.isButton()) {
+    const [prefix, action, ...rest] = interaction.customId.split('-');
+    if (prefix === 'disp' && (action === 'go' || action === 'cancel')) {
+      const id = rest.join('-');
+      const pending = pendingDispatches.get(id);
+      if (!pending) {
+        await interaction.reply({ content: '⏰ 이미 만료되었거나 처리된 plan 입니다.', ephemeral: true });
+        return;
+      }
+      _expirePending(id);
+
+      // 버튼 비활성화 (메시지 components 비우기)
+      try {
+        await interaction.update({
+          content: action === 'go' ? '✅ 승인됨 — 디스패치 시작합니다.' : '❌ 취소됨 — 디스패치 안 함.',
+          components: [],
+        });
+      } catch (_) {}
+
+      if (action === 'go') {
+        try {
+          await dispatchToAgents(pending.thread, pending.taskContent);
+        } catch (err) {
+          console.error('[Bot] approved dispatch 실행 오류:', err);
+          try { await pending.thread.send(`❌ dispatch 실행 오류: ${err.message}`); } catch (_) {}
+        }
+      }
+      return;
+    }
   }
 
   if (!interaction.isChatInputCommand()) return;
@@ -399,7 +440,8 @@ client.on('messageCreate', async (message) => {
           autoArchiveDuration: 1440,
         });
 
-        await dispatchToAgents(thread, userMessage);
+        // PR-PLAN1: CEO 직접 메시지 dispatch — plan-check 게이트 경유
+        await dispatchWithPlanCheck(thread, userMessage);
 
         const r = message.reactions.cache.get('⏳');
         if (r) await r.remove().catch(() => {});
@@ -468,7 +510,8 @@ client.on('messageCreate', async (message) => {
       // (최상위 채널로 올릴 필요 없이 스레드 안에서 ---BE---/---FE---/---AI--- 바로 실행)
       if (DISPATCH_CHANNELS.has(parentName) && /---\s*(BE|FE|AI|ALL)\s*---/i.test(userMessage)) {
         await message.react('⏳');
-        await dispatchToAgents(message.channel, userMessage);
+        // PR-PLAN1: 스레드 내 dispatch — plan-check 게이트 경유
+        await dispatchWithPlanCheck(message.channel, userMessage);
         const r0 = message.reactions.cache.get('⏳');
         if (r0) await r0.remove().catch(() => {});
         await message.react('✅');
@@ -597,25 +640,14 @@ async function handleDispatchCommand(interaction) {
   }
 
   const targetLabels = targets.map(t => CHANNEL_LABELS[t.channelName] || t.channelName).join(', ');
-  await interaction.editReply(`📋 **디스패치 시작** — ${targetLabels}\n\`\`\`\n${directive.substring(0, 200)}\n\`\`\``);
-
-  // 스레드에서 실행하거나 채널에서 follow-up으로 결과 전송
-  const channel = interaction.channel;
-  const results = await Promise.allSettled(
-    targets.map(t => runClaudeToThread(channel, t.prompt, t.channelName))
+  await interaction.editReply(
+    `📋 **디스패치 요청** — ${targetLabels}\n\`\`\`\n${directive.substring(0, 200)}\n\`\`\`\n` +
+    `plan-check 후 승인하면 실행합니다.`
   );
 
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      const { channelName, label, buffer, timedOut } = result.value;
-      await channel.send({ embeds: [buildResultEmbed(channelName, label, buffer, timedOut)] });
-    } else {
-      await channel.send(`❌ 에이전트 오류: ${result.reason?.message}`);
-    }
-  }
-
-  const succeeded = results.filter(r => r.status === 'fulfilled').length;
-  await interaction.followUp(`✅ **전체 완료** — ${succeeded}/${results.length} 에이전트 성공`);
+  // PR-PLAN1: /dispatch 슬래시도 plan-check 게이트 경유.
+  // dispatchWithPlanCheck 가 thread 인자에 send 만 하면 되므로 channel 그대로 전달 가능.
+  await dispatchWithPlanCheck(interaction.channel, directive);
 }
 
 /**
@@ -652,6 +684,80 @@ function safeContent(s) {
   if (typeof s !== 'string') return s;
   if (s.length <= DISCORD_CONTENT_LIMIT) return s;
   return s.slice(0, DISCORD_CONTENT_LIMIT) + '\n…(잘림, 대시보드에서 전체 확인)';
+}
+
+// ─── PR-PLAN1: dispatch plan-check 게이트 ────────────────────
+// 사용자가 직접 보낸 dispatch 는 즉시 실행 대신 plan-check 한 번 + ✅/❌ 버튼.
+// 큐 자동 체이닝은 이미 적재 시점에 사용자 승인된 것이므로 plan-check skip.
+const PENDING_TTL_MS = 10 * 60 * 1000; // 10분
+const pendingDispatches = new Map(); // id → { thread, taskContent, expiresAt, timer }
+
+function _newPendingId() {
+  return `pd-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function _expirePending(id) {
+  const p = pendingDispatches.get(id);
+  if (!p) return;
+  pendingDispatches.delete(id);
+  if (p.timer) clearTimeout(p.timer);
+}
+
+/**
+ * dispatch 호출 직전에 plan-check + 사용자 승인 게이트.
+ * - bypass: 메시지에 [no-plan] 또는 auto: prefix 가 있으면 즉시 dispatch.
+ * - 그 외: read-only Claude 로 plan 한 번 → embed + 버튼 표시 → 사용자 클릭 시 진행/취소.
+ */
+async function dispatchWithPlanCheck(thread, taskContent) {
+  const bypass =
+    /\[no-?plan\]/i.test(taskContent) ||
+    /^\s*auto\s*:/i.test(taskContent);
+
+  if (bypass) {
+    await thread.send('⚡ plan-check **bypass** — 바로 디스패치합니다.');
+    return dispatchToAgents(thread, taskContent);
+  }
+
+  await thread.send('📋 **plan-check** 중… 코드 변경 없이 계획만 미리 검토합니다.');
+
+  const planResult = await runClaudeToThread(thread, taskContent, 'ceo', { plan: true });
+
+  // 결과 embed
+  await thread.send({
+    embeds: [buildResultEmbed('ceo', '📋 plan-check', planResult.buffer, planResult.timedOut)],
+  });
+
+  // 승인 버튼
+  const id = _newPendingId();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`disp-go-${id}`)
+      .setLabel('✅ 이대로 디스패치')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`disp-cancel-${id}`)
+      .setLabel('❌ 취소')
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  pendingDispatches.set(id, {
+    thread,
+    taskContent,
+    expiresAt: Date.now() + PENDING_TTL_MS,
+    timer: setTimeout(async () => {
+      if (pendingDispatches.has(id)) {
+        pendingDispatches.delete(id);
+        try { await thread.send(`⏰ plan-check 만료 (10분 무응답) — 디스패치 취소됨.\n다시 시도하려면 같은 메시지를 보내거나 \`auto:\` prefix 로 plan 우회.`); } catch (_) {}
+      }
+    }, PENDING_TTL_MS),
+  });
+
+  await thread.send({
+    content:
+      '⏳ 위 plan 검토 후 진행/취소를 선택하세요. ' +
+      '바로 시작하고 싶으면 메시지에 `auto:` prefix 또는 `[no-plan]` 포함하세요. (10분 후 자동 취소)',
+    components: [row],
+  });
 }
 
 async function dispatchToAgents(thread, taskContent) {
