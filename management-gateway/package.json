@@ -7,8 +7,9 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
     "express": "^4.19.2",
-    "http-proxy-middleware": "^3.0.3",
-    "cookie-parser": "^1.4.7"
+    "http-proxy-middleware": "^3.0.3"
   }
 }

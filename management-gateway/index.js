@@ -24,6 +24,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 
@@ -59,7 +60,20 @@ function loadCredentials() {
 function verifyCredentials(username, password) {
   const creds = loadCredentials();
   if (!creds) return false;
-  return creds.username === username && creds.password === password;
+  if (creds.username !== username) return false;
+  // 우선 bcrypt 해시 검증, 없으면 평문(레거시)로 fallback
+  if (typeof creds.passwordHash === 'string' && creds.passwordHash.length > 0) {
+    try {
+      return bcrypt.compareSync(password, creds.passwordHash);
+    } catch {
+      return false;
+    }
+  }
+  if (typeof creds.password === 'string' && creds.password.length > 0) {
+    console.warn('[Gateway] ⚠️  평문 비밀번호 사용 중 — passwordHash 로 마이그레이션 권장');
+    return creds.password === password;
+  }
+  return false;
 }
 
 // ─── 세션 유틸 ───────────────────────────────────────────
