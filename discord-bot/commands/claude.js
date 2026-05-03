@@ -7,21 +7,16 @@ const { appendChangelog } = require('../changelog-manager');
 const { validateUserMessage } = require('../pre-tool-gate');
 const { loadQueue, queueSummary: getQueueSummary } = require('../work-queue');
 const { recordDiscordEvent, readRecentContext } = require('../sync-writer');
+// PR-OOP2: 채널/역할 메타 SSOT — agent-config.js
+const {
+  CHANNEL_LABELS,
+  CHANNEL_COLORS,
+  getSyncAgent,
+} = require('../agent-config');
 
-/**
- * channelName(claude.js 내부 키) → claude-sync agent (ceo|dev|be|fe|ai|user)
- */
-function toSyncAgent(channelName) {
-  switch (channelName) {
-    case 'ceo':           return 'ceo';
-    case 'backend-dev':   return 'be';
-    case 'frontend-dev':  return 'fe';
-    case 'ai-dev':        return 'ai';
-    case 'dev':
-    case '잡담':
-    default:              return 'dev';
-  }
-}
+// channelName → claude-sync agent (ceo|dev|be|fe|ai|user)
+// agent-config.js 의 SSOT 를 우회하지 않도록 thin wrapper.
+const toSyncAgent = getSyncAgent;
 
 const MAX_LEN = 1900;
 const STREAM_INTERVAL_MS = 4000;
@@ -274,25 +269,8 @@ CEO가 "진행해", "시작해", "ㄱㄱ", "응", "해줘", "돌려", "큐 시�
 `,
 };
 
-/** 채널/역할별 표시 라벨 */
-const CHANNEL_LABELS = {
-  'dev':          '⚡ 개발',
-  'backend-dev':  '🔧 BE (디스패치)',
-  'frontend-dev': '🎨 FE (디스패치)',
-  'ai-dev':       '🤖 AI (디스패치)',
-  'ceo':          '👔 CEO 기획실',
-  '잡담':         '💬 잡담',
-};
-
-/** 채널/역할별 Embed 색상 */
-const CHANNEL_COLORS = {
-  'dev':          0xFEE75C,  // 노랑
-  'backend-dev':  0x5865F2,  // 파랑
-  'frontend-dev': 0x57F287,  // 초록
-  'ai-dev':       0xEB459E,  // 보라/핑크
-  'ceo':          0xFFD700,  // 금색
-  '잡담':         0xED4245,  // 빨강
-};
+// PR-OOP2: CHANNEL_LABELS, CHANNEL_COLORS 정의 → agent-config.js SSOT 로 이관.
+// 본 파일은 그대로 import 해서 사용한다.
 
 /**
  * 기획실 지시문을 섹션별로 파싱
