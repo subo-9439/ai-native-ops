@@ -1,15 +1,1 @@
-services:
-  - type: web
-    name: wol-service
-    runtime: node
-    rootDir: wol-service
-    buildCommand: npm install
-    startCommand: npm start
-    plan: free
-    envVars:
-      - key: WOL_SECRET
-        sync: false
-      - key: PC_MAC
-        sync: false
-      - key: PC_PUBLIC_IP
-        sync: false
+services: []

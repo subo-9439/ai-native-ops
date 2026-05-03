@@ -44,7 +44,6 @@ https://admin.nolza.org              Discord Gateway
 | **Management Gateway** | `management-gateway/` | 4000 | ✅ `admin.nolza.org` | 인증 + 통합 진입점 |
 | **Discord 봇** | `discord-bot/` | 4040 (내부) | ❌ Gateway WS만 | 운영 명령 인터페이스 |
 | **문서 위키** | `docs-wiki/` | 4050 (내부) | ❌ 게이트웨이 경유만 | 문서 브라우징 |
-| **wol-service** | `wol-service/` | - | (미사용) | 이전 WoL 릴레이 |
 
 ---
 
