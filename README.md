@@ -74,6 +74,16 @@ cd docs-wiki            && bash start-local.sh
 cd management-gateway   && bash start-local.sh
 ```
 
+### 봇 안전 재기동 (코드 변경 후)
+
+```bash
+bash discord-bot/restart-local.sh
+```
+
+PID 검증 + 종료 확인 + 부팅 대기까지 한 번에. `lsof | xargs kill` 패턴이 빈
+인자로 사일런트 실패해 옛 봇이 살아남는 회귀(2026-05-04~05) 차단용.
+exit 0 = 헬스 200 받음, exit 1 = 옛 PID 안 죽음, exit 2 = 부팅 timeout.
+
 ### 헬스체크
 
 ```bash
@@ -232,6 +242,7 @@ discord-bot/
 │   └── docs.js               ← /docs (SSO 자동 로그인 링크)
 ├── register-commands.js      ← 슬래시 커맨드 등록 (초기 1회/변경 시)
 ├── start-local.sh
+├── restart-local.sh           ← 안전 재기동 (PID 검증 + 헬스 대기)
 └── Dockerfile
 ```
 
