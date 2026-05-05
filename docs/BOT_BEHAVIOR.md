@@ -89,14 +89,76 @@ CEO 입력
 |---|---|---|---|
 | 2026-04-20 | OPS3~6 수정이 봇 메모리에 미반영 | start-local.sh에 기존 PID kill 로직 없음 | OPS8 — start-local.sh에 grace kill 추가 |
 | 2026-04-20 | `<<START_QUEUE>>`로 새 PR 큐 적재 시도했으나 디스패치 안 됨 | 태그는 pick만 함, append 로직 없음 | OPS3(런북) + OPS4(프롬프트 규칙) + OPS5(pending 0 경고 reply) |
+| 2026-05-04~05 | `/plan`, plan-check, agent-config.js 등 신규 코드가 봇에 미반영 | `lsof -ti :4040 \| xargs kill -9` 가 빈 결과 시 사일런트 실패 → 옛 봇이 40h 살아남 | PR-OPS-RESTART1 — `restart-local.sh` 신설 + post-commit hook 자동 호출 |
 
 ## 8. 검증 체크리스트
 
 봇 코드 변경 후:
 1. `bash -n discord-bot/start-local.sh` (syntax)
 2. `node --check discord-bot/index.js` (syntax)
-3. 기존 PID 확인: `pgrep -f "discord-bot/index.js$"`
-4. `bash project-manager/start.sh` 재실행
-5. `pgrep -f "discord-bot/index.js$"` → **새 PID로 바뀌었는지** 확인
-6. `#alerts` 채널 → 🟢 온라인 embed 도착 확인
-7. CEO 스레드에 `<<START_QUEUE>>` 트리거 → pending 0이면 ⚠️ 경고 reply 확인
+3. **재기동**: `bash discord-bot/restart-local.sh` (PID 검증 + 헬스 200 대기까지 자동)
+4. 새 PID 확인: `lsof -ti :4040`
+5. `#🚨-alerts` 채널 → 🟢 온라인 embed 도착 확인
+6. CEO 스레드에 `<<START_QUEUE>>` 트리거 → pending 0이면 ⚠️ 경고 reply 확인
+
+## 9. 코드 변경 → 봇 반영 자동 워크플로 (PR-OPS-RESTART1)
+
+### 9.1 핵심 원칙
+
+봇 코드(`.js`, `start-local.sh`, `restart-local.sh`)를 변경했다면 **반드시 안전 재기동**한다.
+
+> **절대 금지**: 단순 `lsof | xargs kill` 패턴. 빈 결과 시 사일런트 실패하여 옛 봇이 살아남는다.
+> 2026-05-04~05 사고: 옛 봇이 40h 떠있어 신규 슬래시 명령(`/plan`)이 반영 안 된 채 사용자 보고 발생.
+
+### 9.2 안전 재기동 — `restart-local.sh`
+
+```bash
+bash discord-bot/restart-local.sh
+```
+
+| 단계 | 동작 | 실패 시 |
+|---|---|---|
+| 1 | `lsof -ti :4040` 로 PID 조회 + uptime 출력 | 봇 미기동 시 (free) 메시지 후 정상 진행 |
+| 2 | `kill -9 PID` 후 max 5초 종료 검증 | exit 1 (옛 PID 안 죽음) |
+| 3 | `start-local.sh` 백그라운드 기동 | — |
+| 4 | `/health 200` 까지 max 15초 대기 | exit 2 (부팅 timeout) |
+| 5 | 새 PID + 소요 시간 보고 | — |
+
+환경변수: `BOT_HTTP_PORT=4040`, `BOT_LOG_FILE=/tmp/discord-bot.log`,
+`BOT_KILL_TIMEOUT=5`, `BOT_BOOT_TIMEOUT=15`.
+
+### 9.3 자동화 — git post-commit hook
+
+**1회 설치** (사용자 직접 실행 필요 — 자동 install 차단됨):
+```bash
+bash scripts/install-hooks.sh
+```
+
+`git config core.hooksPath = scripts/git-hooks` 설정. 이후 `git commit` 시점에
+`scripts/git-hooks/post-commit` 가 실행되어:
+
+- 마지막 commit 변경 파일에 `discord-bot/*.js` 또는 `*.sh` 가 있으면 `restart-local.sh` 자동 호출
+- `*.md` / `docs/` / `package-lock.json` 만 변경된 경우 skip
+- 봇이 미기동 상태(port 4040 free)면 skip — 자동 기동 부담 없게
+- 우회 (긴급): `SKIP_BOT_RESTART=1 git commit ...`
+- 영구 해제: `git config --unset core.hooksPath`
+
+### 9.4 Claude/AI 에이전트 행동 규칙
+
+이 저장소에서 봇 코드를 수정하는 Claude/AI 에이전트는 다음을 자발적으로 따른다:
+
+1. `discord-bot/*.js` 또는 `start-local.sh`/`restart-local.sh` 를 변경 후 commit 했다면
+2. **반드시 `bash discord-bot/restart-local.sh` 를 호출**하여 새 코드 반영을 확인
+3. exit 0 (헬스 200) 이 아니면 그 commit 의 변경이 운영에 반영 안 된 것 — 사용자에게 즉시 보고
+4. post-commit hook 가 설치되어 있다면 자동 실행되지만, hook 미설치 환경에서도 위 호출은 의무
+
+### 9.5 검증 명령
+
+```bash
+# 자동 hook 동작 확인 (변경 0 → skip)
+git commit --allow-empty -m "test hook noop"
+
+# 수동 확인 (현재 떠있는 봇 검증)
+lsof -ti :4040                          # PID 1개 출력
+ps -p $(lsof -ti :4040) -o etime=       # uptime — 코드 변경 후 짧아야 정상
+```

@@ -1,0 +1,51 @@
+#!/bin/bash
+# PR-OPS-RESTART1 post-commit hook
+#
+# 마지막 commit 에서 discord-bot/ 코드(.js / start-local.sh / restart-local.sh)가
+# 변경됐다면 봇을 안전 재기동한다. .md / docs / package-lock 만 변경된 경우는
+# skip — 코드 동작 영향 없음.
+#
+# 설치: bash scripts/install-hooks.sh
+# 우회: SKIP_BOT_RESTART=1 git commit ...
+
+set -e
+
+if [ "${SKIP_BOT_RESTART:-0}" = "1" ]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RESTART_SCRIPT="$REPO_ROOT/discord-bot/restart-local.sh"
+
+# 마지막 commit 변경 파일 — discord-bot/ 코드만 추적.
+# 제외: docs/, *.md, *.txt, package-lock.json
+CHANGED="$(
+  git diff --name-only HEAD^ HEAD 2>/dev/null \
+    | grep -E '^discord-bot/' \
+    | grep -vE '^discord-bot/docs/|\.md$|\.txt$|^discord-bot/package-lock\.json$' \
+    || true
+)"
+
+if [ -z "$CHANGED" ]; then
+  exit 0
+fi
+
+if [ ! -x "$RESTART_SCRIPT" ]; then
+  echo "[post-commit] ⚠️ $RESTART_SCRIPT 가 없거나 실행 권한 없음 — restart skip" >&2
+  exit 0
+fi
+
+# 4040 점유 프로세스 없으면 skip — 봇이 안 떠있는 상태라 자동 기동 부담 없게.
+if [ -z "$(lsof -ti :4040 2>/dev/null || true)" ]; then
+  echo "[post-commit] 봇 미기동 상태 (port 4040 free) — restart skip"
+  echo "[post-commit] 변경 파일:"
+  echo "$CHANGED" | sed 's/^/  /'
+  exit 0
+fi
+
+echo "[post-commit] discord-bot 코드 변경 감지 → restart-local.sh 호출"
+echo "$CHANGED" | sed 's/^/  • /'
+bash "$RESTART_SCRIPT" || {
+  echo "[post-commit] ⚠️ restart-local.sh 실패 (exit $?) — 수동 점검 필요" >&2
+  exit 0  # commit 자체는 성공 처리
+}
