@@ -162,3 +162,77 @@ git commit --allow-empty -m "test hook noop"
 lsof -ti :4040                          # PID 1개 출력
 ps -p $(lsof -ti :4040) -o etime=       # uptime — 코드 변경 후 짧아야 정상
 ```
+
+## 10. 노트북 슬립 방지 (PR-OPS-AWAKE1)
+
+### 10.1 문제
+
+이 봇/게이트웨이/위키는 맥북에서 직접 동작한다 (Cloudflare Tunnel 경유 외부 노출).
+노트북이 슬립하면 모든 게 멈추고 사용자가 Discord 명령을 보내도 무응답.
+
+**해결**: `caffeinate -i -s` 가 항상 떠 있어야 한다.
+- `-i` idle sleep 차단 (시간 지나도 안 잠)
+- `-s` AC 전원 시 시스템 슬립 차단
+- `-d` 안 씀 → 화면은 꺼짐 (전력 절감)
+
+### 10.2 셋업 (1회 실행)
+
+```bash
+bash scripts/install-launchd.sh caffeinate
+```
+
+이 스크립트가 하는 일:
+1. `scripts/launchd/com.nolza.caffeinate.plist` → `~/Library/LaunchAgents/` 복사
+2. `launchctl load` 로 즉시 활성화
+3. 검증 (LastExitStatus 확인)
+
+`com.nolza.caffeinate` 는 `/usr/bin/caffeinate` 만 호출하므로 macOS TCC(FDA) 무관.
+다음 로그인부터 자동 적용 + KeepAlive 로 죽으면 재시작.
+
+### 10.3 (선택) bot/gateway/wiki 도 launchd 자동 시작
+
+```bash
+# 사전: 시스템 설정 → 개인정보 → 전체 디스크 접근 → /bin/bash 추가 (FDA)
+bash scripts/install-launchd.sh ops
+```
+
+`com.nolza.ops` 는 `start.sh` 를 호출하는데 `~/Desktop` 접근 권한 필요. FDA
+부여 안 됐으면 `[ops.err.log] Operation not permitted` 로 실패.
+
+### 10.4 검증
+
+```bash
+# 1) launchd 로드 상태
+launchctl list | grep com.nolza
+
+# 2) caffeinate 프로세스 확인
+ps -ef | grep "caffeinate -i -s" | grep -v grep
+
+# 3) pmset 슬립 차단 reason 에 caffeinate 보이는지
+pmset -g | grep "sleep "
+# 기대: sleep N (sleep prevented by ..., caffeinate)
+```
+
+### 10.5 해제
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nolza.caffeinate.plist
+launchctl unload ~/Library/LaunchAgents/com.nolza.ops.plist
+rm ~/Library/LaunchAgents/com.nolza.caffeinate.plist
+rm ~/Library/LaunchAgents/com.nolza.ops.plist
+```
+
+### 10.6 한계 (정직히 명시)
+
+- **노트북 lid 닫음 + 외부 디스플레이 없음** → macOS 가 강제 슬립. caffeinate 도
+  여기엔 못 막음. 외부 모니터 연결(clamshell 모드)하거나 lid 열어둬야.
+- **배터리 모드** → `-s` 플래그가 AC 전용이라 배터리 시 슬립 가능. 항상 충전 권장.
+- **재부팅** → ~/Library/LaunchAgents 의 plist 가 사용자 로그인 시 자동 로드되므로 OK.
+  단 첫 로그인 전 (boot screen) 에는 안 동작.
+
+### 10.7 알려진 사고 — 본 게이트 신설 배경
+
+- **2026-05-06**: 사용자 보고 "노트북 잠자기 모드에서도 관리 디스코드 서비스 계속
+  돌아가야 하는데 안 됨". 진단: `caffeinate` 미동작 (start.sh 안 거치고 nohup 으로만
+  봇 띄움) + `com.nolza.ops` launchd 미로드 + FDA 미부여. 슬립 시 모든 4000/4040/4050
+  서비스 정지 → Discord 무응답.

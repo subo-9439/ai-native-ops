@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nolza.caffeinate</string>
+
+  <!--
+    PR-OPS-AWAKE1 — 시스템 슬립 영구 차단 (Discord 봇 + 게이트웨이 + 위키 가용성).
+    /usr/bin/caffeinate 자체는 외부 파일 접근 없이 IOPMAssertion 만 호출하므로
+    macOS TCC(FDA) 무관. com.nolza.ops 가 FDA 미부여로 안 떠도 caffeinate 는
+    독립적으로 떠서 시스템 슬립을 차단한다.
+
+    -i : idle sleep 방지 (시스템 슬립 차단)
+    -s : AC 전원 시 시스템 슬립 차단
+    (-d 는 일부러 안 씀 → 화면은 꺼져서 전력 절감)
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>-s</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- caffeinate 가 어떤 이유로 죽으면 즉시 재시작 -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>WorkingDirectory</key>
+  <string>/tmp</string>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/caffeinate.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/caffeinate.err.log</string>
+</dict>
+</plist>
