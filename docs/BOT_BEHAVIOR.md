@@ -236,3 +236,53 @@ rm ~/Library/LaunchAgents/com.nolza.ops.plist
   돌아가야 하는데 안 됨". 진단: `caffeinate` 미동작 (start.sh 안 거치고 nohup 으로만
   봇 띄움) + `com.nolza.ops` launchd 미로드 + FDA 미부여. 슬립 시 모든 4000/4040/4050
   서비스 정지 → Discord 무응답.
+
+## 11. 외부 헬스 모니터링 (PR-OPS-AWAKE2)
+
+### 11.1 배경
+
+slot 차단을 잘 해놨어도 어떤 이유로(노트북 강제 종료, 충전 끊김, docker 컨테이너
+크래시 등) 서비스가 멈출 수 있다. **노트북 안에서만 체크하면 노트북 자체가
+다운됐을 때 알 수 없다.** GitHub Actions 가 외부에서 ping 해서 다운 감지 시
+Discord 알림.
+
+### 11.2 동작
+
+`.github/workflows/health-check.yml`:
+- **5분마다 cron** (`*/5 * * * *`) 으로 자동 실행
+- 3개 endpoint 점검: api.nolza.org / admin.nolza.org / nolza.org
+- 하나라도 200 아니면 **Discord webhook 으로 알림**
+- 알림 embed 에 흔한 원인 안내 (맥북 슬립 / docker 다운 / nginx 재시작)
+- 수동 실행: GitHub Actions UI → workflow_dispatch
+
+### 11.3 셋업 (사용자 1회)
+
+GitHub repo `subo-9439/ai-native-ops` → **Settings → Secrets and variables → Actions** →
+`New repository secret`:
+
+| Name | Value |
+|---|---|
+| `DISCORD_ALERTS_WEBHOOK` | Discord `#🚨-alerts` 채널의 webhook URL |
+
+> Webhook URL 은 노트북의 `~/.claude-sync/discord-alerts-webhook` 또는 `.env`
+> 의 `DISCORD_ALERTS_WEBHOOK` 와 동일.
+
+저장 후 **5~15분 안에** 첫 cron 실행 (GitHub Actions 는 best-effort).
+또는 **Actions 탭 → health-check → Run workflow** 로 즉시 시도.
+
+### 11.4 검증
+
+```bash
+# 일부러 봇 죽여서 알림 오는지 확인:
+lsof -ti :4040 | xargs kill -9
+# 5~10분 후 #🚨-alerts 채널에 빨간 embed 도착해야 함.
+# 다시 살리기:
+bash discord-bot/restart-local.sh
+```
+
+### 11.5 알림 채널 확장 (옵션)
+
+이메일도 받고 싶으면 GitHub Settings → Notifications → Actions failure on schedule
+ON. 워크플로 실패 메일도 함께 옴.
+
+휴대폰 알림은 Discord 모바일 앱 → `#🚨-alerts` 채널 알림 ON 하면 자동.

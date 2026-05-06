@@ -1,0 +1,109 @@
+name: health-check
+
+# PR-OPS-AWAKE2 — 외부 ping 모니터링.
+# 노트북 슬립으로 봇/게이트웨이/API 가 멈춰도 GitHub Actions 가 감지해서
+# Discord 로 알림. 노트북 자체가 다운돼도 작동 (외부 호출이라 OK).
+
+on:
+  schedule:
+    # 5분마다. GitHub Actions cron 은 best-effort (5~15분 지연 가능) 이지만
+    # 노트북 슬립 케이스(분~시간 단위)엔 충분.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: # 수동 트리거 가능
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check api.nolza.org (game server)
+        id: api
+        run: |
+          set +e
+          BODY=$(curl -fsS --max-time 10 -w "\n__HTTP__%{http_code}__" \
+            https://api.nolza.org/api/v1/games/definitions 2>&1)
+          CODE=$(echo "$BODY" | grep -oE "__HTTP__[0-9]+__" | grep -oE "[0-9]+" || echo "000")
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "✅ api.nolza.org 200"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ api.nolza.org $CODE"
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check admin.nolza.org (gateway)
+        id: admin
+        run: |
+          set +e
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 \
+            https://admin.nolza.org/health || echo "000")
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "✅ admin.nolza.org 200"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ admin.nolza.org $CODE"
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check nolza.org (frontend)
+        id: web
+        run: |
+          set +e
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 \
+            https://nolza.org/ || echo "000")
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "✅ nolza.org 200"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ nolza.org $CODE"
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Discord on any failure
+        if: |
+          steps.api.outputs.ok != '1' ||
+          steps.admin.outputs.ok != '1' ||
+          steps.web.outputs.ok != '1'
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ALERTS_WEBHOOK }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_ALERTS_WEBHOOK secret 미설정 — 알림 skip"
+            exit 0
+          fi
+          API_CODE="${{ steps.api.outputs.code }}"
+          ADMIN_CODE="${{ steps.admin.outputs.code }}"
+          WEB_CODE="${{ steps.web.outputs.code }}"
+
+          # 노트북 슬립이 가장 흔한 원인이므로 안내 문구 포함.
+          DESC="api.nolza.org: ${API_CODE}\nadmin.nolza.org: ${ADMIN_CODE}\nnolza.org: ${WEB_CODE}\n\n흔한 원인:\n- 맥북 슬립 (caffeinate 미동작)\n- docker app 컨테이너 다운\n- 게이트웨이 nginx 재시작 필요"
+
+          PAYLOAD=$(jq -n \
+            --arg desc "$DESC" \
+            --arg ts "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+            '{embeds: [{
+              title: "🔴 외부 헬스체크 실패",
+              description: $desc,
+              color: 15158332,
+              footer: {text: $ts}
+            }]}')
+
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$WEBHOOK" | head -c 200 || true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Health Check Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Target | HTTP |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| api.nolza.org | ${{ steps.api.outputs.code }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| admin.nolza.org | ${{ steps.admin.outputs.code }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| nolza.org | ${{ steps.web.outputs.code }} |" >> "$GITHUB_STEP_SUMMARY"
