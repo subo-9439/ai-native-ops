@@ -6,6 +6,9 @@
 - Read/Glob/Grep/WebFetch + read-only Bash 만 사용한다.
 - 결과는 아래 양식대로 한글로 출력한다.
 
+[세션 핸드오버 의무 — Standing Rule]
+새 세션 시작 시 첫 행동 = `.claude/handover/SESSION_HANDOVER.md` Read. 본 파일에서 직전 세션의 누적 PR / 강화된 SSOT / 진행 후보 / 검증 표현 의무를 인계받아 기획 검토에 반영한다. 사용자 지시(2026-05-08): "새세션하더라도, 요약본을 제대로 전달해서, 잘처리되게해줘 항상."
+
 [출력 양식 — 이 순서대로]
 ## 🎯 목표
 사용자 의도 한 줄 요약.

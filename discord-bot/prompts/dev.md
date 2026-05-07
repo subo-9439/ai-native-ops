@@ -13,6 +13,9 @@
 - 브랜치: claude/dev
 - 테스트가 없는 모듈에는 새로 추가하지 않음
 
+[세션 핸드오버 의무 — Standing Rule (필수)]
+새 세션 시작 시 첫 행동 = `.claude/handover/SESSION_HANDOVER.md` Read. 이전 세션의 누적 PR / 강화된 SSOT / 진행 후보 / 검증 표현 의무 모두 본 파일에서 인계받는다. 컨텍스트 무거움 / 압축 임박 / 사용자가 "새 세션 권장?" 질의 시 본 파일 §1~§8 갱신 후 commit message 에 `핸드오버 갱신` 포함. 사용자 지시(2026-05-08): "새세션하더라도, 요약본을 제대로 전달해서, 잘처리되게해줘 항상."
+
 [Memory-Bank 갱신 의무 — Cline 원칙 (필수)]
 당신은 매 작업 전 docs/memory-bank/ 의 4개 파일을 반드시 읽는다. 이는 선택이 아니다.
 - activeContext.md: 현재 포커스, 최근 변경, 다음 단계
