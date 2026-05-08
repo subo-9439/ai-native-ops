@@ -39,15 +39,73 @@ function _extractYamlList(text, section) {
     if (!t || t.startsWith('#')) continue;
     if (!t.startsWith('- ') && t !== '-') continue;
     let val = t.slice(1).trim();
-    if (
-      (val.startsWith("'") && val.endsWith("'")) ||
-      (val.startsWith('"') && val.endsWith('"'))
-    ) {
-      val = val.slice(1, -1);
+    // PR-GATE-EXCEPTIONS-JS — inline comment 처리 (quote 안의 # 는 보존)
+    const m = val.match(/^(['"])(.*?)\1\s*(#.*)?$/);
+    if (m) {
+      val = m[2];
+    } else {
+      // 무 quote: # 이전까지만
+      const hashIdx = val.indexOf('#');
+      if (hashIdx !== -1) val = val.slice(0, hashIdx).trim();
     }
     if (val) out.push(val);
   }
   return out.length ? out : null;
+}
+
+/**
+ * PR-GATE-EXCEPTIONS-JS — nested yaml list 파서
+ * 'parent:' 안의 'child:' 의 - 항목 수집.
+ * 예: exceptions.sensitive_paths
+ */
+function _extractNestedYamlList(text, parent, child) {
+  const lines = text.split('\n');
+  const subLines = [];
+  let inParent = false;
+  for (const raw of lines) {
+    if (raw.match(new RegExp(`^${parent}:\\s*$`))) {
+      inParent = true;
+      continue;
+    }
+    if (!inParent) continue;
+    // 다음 top-level key 만나면 종료
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*:\s*$/.test(raw)) break;
+    subLines.push(raw);
+  }
+  if (!subLines.length) return [];
+
+  const out = [];
+  let inChild = false;
+  for (const raw of subLines) {
+    // child key (들여쓰기 있는 'child:') 매칭
+    if (raw.match(new RegExp(`^\\s+${child}:\\s*$`))) {
+      inChild = true;
+      continue;
+    }
+    if (!inChild) continue;
+    // 같은/다른 nested key 만나면 종료
+    if (
+      /^\s+[a-zA-Z_][a-zA-Z0-9_]*:\s*$/.test(raw) &&
+      !raw.match(new RegExp(`^\\s+${child}:`))
+    ) {
+      break;
+    }
+    const t = raw.trim();
+    if (!t || t.startsWith('#')) continue;
+    if (!t.startsWith('- ') && t !== '-') continue;
+    let val = t.slice(1).trim();
+    // PR-GATE-EXCEPTIONS-JS — inline comment 처리 (quote 안의 # 는 보존)
+    const m = val.match(/^(['"])(.*?)\1\s*(#.*)?$/);
+    if (m) {
+      val = m[2];
+    } else {
+      // 무 quote: # 이전까지만
+      const hashIdx = val.indexOf('#');
+      if (hashIdx !== -1) val = val.slice(0, hashIdx).trim();
+    }
+    if (val) out.push(val);
+  }
+  return out;
 }
 
 function _loadPolicy() {
@@ -67,15 +125,19 @@ function _loadPolicy() {
       /\bgit\s+push\s+.*--force\b/i,
       /\bsudo\s+rm\b/i,
     ],
+    exceptions: [], // PR-GATE-EXCEPTIONS-JS — fallback 시 빈 리스트 (기존 동작)
   };
   try {
     const text = fs.readFileSync(POLICY_PATH, 'utf8');
     const sensitive = _extractYamlList(text, 'sensitive_paths');
     const dangerous = _extractYamlList(text, 'dangerous_commands');
+    // PR-GATE-EXCEPTIONS-JS — exceptions.sensitive_paths nested 추출
+    const exceptions = _extractNestedYamlList(text, 'exceptions', 'sensitive_paths');
     if (!sensitive || !dangerous) throw new Error('empty policy lists');
     return {
       sensitive: sensitive.map((p) => new RegExp(p, 'i')),
       dangerous: dangerous.map((p) => new RegExp(p, 'i')),
+      exceptions: exceptions.map((p) => new RegExp(p, 'i')),
     };
   } catch (exc) {
     process.stderr.write(
@@ -88,6 +150,20 @@ function _loadPolicy() {
 const _policy = _loadPolicy();
 const SENSITIVE_PATTERNS = _policy.sensitive;
 const DANGEROUS_PATTERNS = _policy.dangerous;
+const EXCEPTION_PATTERNS = _policy.exceptions;
+
+/**
+ * PR-GATE-EXCEPTIONS-JS — false-positive 차단
+ * @param {string} path
+ * @returns {boolean}
+ */
+function _isException(path) {
+  if (!path) return false;
+  for (const pat of EXCEPTION_PATTERNS) {
+    if (pat.test(path)) return true;
+  }
+  return false;
+}
 
 /**
  * 경로가 민감한 패턴과 일치하는지 확인
@@ -96,6 +172,8 @@ const DANGEROUS_PATTERNS = _policy.dangerous;
  */
 function checkSensitivePath(path) {
   if (!path) return false;
+  // PR-GATE-EXCEPTIONS-JS — exceptions 우선 검증
+  if (_isException(path)) return false;
   for (const pat of SENSITIVE_PATTERNS) {
     if (pat.test(path)) return true;
   }
