@@ -88,11 +88,13 @@ const TRIGGER_EMOJI = '🤖';
 async function augmentMessageWithAttachments(message) {
   const text = message.content || '';
   const collected = [];
+  // PR-REPLY-CONTEXT (memory L294 2026-05-07 dev A안): 답장 원본 텍스트 prompt head prepend
+  let replyHead = '';
   if (message.attachments && message.attachments.size > 0) {
     for (const a of message.attachments.values()) collected.push({ att: a, msgId: message.id });
   }
 
-  // 답장(reply) 형태로 보낸 경우 원본 메시지의 첨부도 같이 인식
+  // 답장(reply) 형태로 보낸 경우 원본 메시지의 첨부 + 텍스트 같이 인식
   const refId = message.reference?.messageId;
   if (refId) {
     try {
@@ -101,18 +103,28 @@ async function augmentMessageWithAttachments(message) {
         for (const a of ref.attachments.values()) collected.push({ att: a, msgId: ref.id });
         console.log(`[Attach] reply ref=${ref.id} attachments.size=${ref.attachments.size}`);
       }
+      // PR-REPLY-CONTEXT: 답장 원본 텍스트도 prompt head 에 prepend (15줄 패치)
+      if (ref?.content && ref.content.trim()) {
+        const author = ref.author?.username || ref.author?.tag || 'user';
+        // 원본 너무 길면 1500자 truncate (전체 prompt 비대화 방지)
+        const trimmed = ref.content.length > 1500
+          ? ref.content.substring(0, 1500) + '… (truncated)'
+          : ref.content;
+        replyHead = `[답장 원본] @${author}:\n${trimmed.trim()}\n\n---\n\n`;
+        console.log(`[Reply] ref=${ref.id} author=${author} contentLen=${ref.content.length}`);
+      }
     } catch (err) {
       console.warn(`[Attach] reply 원본 fetch 실패 ref=${refId}: ${err.message}`);
     }
   }
 
   console.log(`[Attach] msg=${message.id} channel=${message.channel?.name || '?'} attachments.size=${message.attachments?.size || 0} collected=${collected.length}`);
-  if (collected.length === 0) return text;
+  if (collected.length === 0) return replyHead + text;
 
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (!projectDir) {
     console.warn('[Attach] CLAUDE_PROJECT_DIR 미설정 — 첨부 처리 스킵');
-    return text;
+    return replyHead + text;
   }
 
   const dir = path.join(projectDir, '.ops', 'discord-attachments');
@@ -120,7 +132,7 @@ async function augmentMessageWithAttachments(message) {
     await fs.promises.mkdir(dir, { recursive: true });
   } catch (err) {
     console.error('[Bot] 첨부 디렉토리 생성 실패:', err.message);
-    return text;
+    return replyHead + text;
   }
 
   const lines = [];
@@ -149,8 +161,8 @@ async function augmentMessageWithAttachments(message) {
     }
   }
 
-  if (lines.length === 0) return text;
-  return `${text}\n\n[첨부 이미지 — Read 툴로 해당 경로 파일을 읽어 내용을 확인할 것]\n${lines.join('\n')}`;
+  if (lines.length === 0) return replyHead + text;
+  return `${replyHead}${text}\n\n[첨부 이미지 — Read 툴로 해당 경로 파일을 읽어 내용을 확인할 것]\n${lines.join('\n')}`;
 }
 
 // ─── 봇 준비 ─────────────────────────────────────────────
