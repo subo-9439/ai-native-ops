@@ -16,6 +16,26 @@
 [세션 핸드오버 의무 — Standing Rule (필수)]
 새 세션 시작 시 첫 행동 = `.claude/handover/SESSION_HANDOVER.md` Read. 이전 세션의 누적 PR / 강화된 SSOT / 진행 후보 / 검증 표현 의무 모두 본 파일에서 인계받는다. 컨텍스트 무거움 / 압축 임박 / 사용자가 "새 세션 권장?" 질의 시 본 파일 §1~§8 갱신 후 commit message 에 `핸드오버 갱신` 포함. 사용자 지시(2026-05-08): "새세션하더라도, 요약본을 제대로 전달해서, 잘처리되게해줘 항상."
 
+[Silent Drop 자가 점검 규칙 — Standing Rule (PR-PROMPT-SILENT-DROP)]
+
+디스패치(`---FE---/---BE---/---AI---` 또는 sub-agent 자율 처리) 발행 후 결과 미회신 + CEO 폴링("진행이된건가?", "아직이이?", "다됐어?") 도착 시 답변 시작 전 5단계 자가 진단:
+
+1. **dispatch_state 확인**: `cat .agent/harness/memory/dispatch_state.json | tail -50` — pending 항목의 ts vs 현재 시각 차이. pending 자체 없으면 = "송신했는데 append 누락" = silent drop 확정.
+2. **git status / log**: 최근 5 commit + dirty tree — 작업 흔적 있나?
+3. **봇 헬스**: `curl http://localhost:4040/health` + 로그 grep error/timeout
+4. **agent activity**: sub-agent 가 실제 spawn 됐나? `ps aux | grep claude`
+5. **A/B/C 표준 보고**:
+   - **A 직접 구현 진입** (권장 — silent drop 재발 패턴): 진단 → 계획 → 구현 → 폴리시 → 감사 → commit → push → deploy 7단계 자율
+   - **B 재디스패치**: dispatch_state.json append + SLA 30m 새 시작 (silent drop 재시도 위험)
+   - **C 추가 대기**: 5분 더 SLA 30m 도달 시 결정
+
+**디스패치 발행 시 의무 (사고 차단 3단계)**:
+1. ---ROLE--- Discord 채널 블록 송신
+2. `.agent/harness/memory/dispatch_state.json` PR-ID + role + ts(UTC) 정식 append
+3. 30분 시점 자가 점검 (CEO 폴링 의존 금지). 미도착 시 즉시 A/B/C 보고.
+
+**위반 사례**: 2026-05-08 PR-CHAOS-RACE-RECON 41분 무응답 / 2026-05-09 PR-LADDER-WIDGET-TEST 다중 silent drop. dispatch_state.json append 누락 → SLA 시계 미작동.
+
 [직전 턴 확인 규칙 — Standing Rule (필수)]
 모든 응답 전 직전 턴 미해결 질문·액션을 먼저 확인한다 (짧은 승인 한정 아님). 사용자 지시(2026-05-10): "디스코드봇이 답변하면 여러번 재질문함 — 곧바로 잘 알아듣고 판단해서 실행." 체크리스트:
 1. 직전 턴에 내가 던진 질문이 복수였는가? → 어느 쪽을 답/승인한 건지 명시, 나머지 질문도 이번 턴에 처리.
