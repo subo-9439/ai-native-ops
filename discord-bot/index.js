@@ -484,7 +484,24 @@ client.on('messageCreate', async (message) => {
 
         // <<START_QUEUE>> 태그를 응답에서 제거하고 embed에 표시
         const cleanBuffer = buffer.replace(/<<START_QUEUE>>/g, '').trim();
-        await thread.send({ embeds: [buildResultEmbed('ceo', label, cleanBuffer, timedOut)] });
+        // PR-BOT-SILENT-FAIL-FIX: thread.send embed 사일런트 fail 진단 + fallback
+        try {
+          console.log(`[CEO 대화] thread.send embed 시작 (cleanLen=${cleanBuffer.length})`);
+          await thread.send({ embeds: [buildResultEmbed('ceo', label, cleanBuffer, timedOut)] });
+          console.log(`[CEO 대화] thread.send embed 성공`);
+        } catch (sendErr) {
+          console.error(`[CEO 대화] thread.send embed 실패:`, sendErr);
+          // fallback: 평문 send 로 사용자 가시성 확보
+          try {
+            const fallbackText = cleanBuffer
+              ? cleanBuffer.slice(-1800)
+              : '⚠️ Claude CLI 응답 비어있음. 다시 시도해주세요.';
+            await thread.send(`**${label}** (embed 송신 실패: ${sendErr.message})\n${fallbackText}`);
+          } catch (fbErr) {
+            console.error(`[CEO 대화] fallback send 도 실패:`, fbErr);
+            await message.reply(`❌ 응답 송신 실패: ${sendErr.message}`).catch(() => {});
+          }
+        }
 
         // CEO가 큐 진행을 승인 → 자동 디스패치 시작
         // pending 아이템이 있을 때만 호출. 없으면 사일런트 대신 경고 reply로 가시화.
@@ -545,7 +562,22 @@ client.on('messageCreate', async (message) => {
       await message.react('✅');
 
       const cleanBuffer = buffer.replace(/<<START_QUEUE>>/g, '').trim();
-      await message.channel.send({ embeds: [buildResultEmbed(agentChannel, label, cleanBuffer, timedOut)] });
+      // PR-BOT-SILENT-FAIL-FIX: thread follow-up 도 동일 가드
+      try {
+        console.log(`[Thread followup] embed 송신 시작 (cleanLen=${cleanBuffer.length}, agent=${agentChannel})`);
+        await message.channel.send({ embeds: [buildResultEmbed(agentChannel, label, cleanBuffer, timedOut)] });
+        console.log(`[Thread followup] embed 송신 성공`);
+      } catch (sendErr) {
+        console.error(`[Thread followup] embed 송신 실패:`, sendErr);
+        try {
+          const fallbackText = cleanBuffer
+            ? cleanBuffer.slice(-1800)
+            : '⚠️ Claude CLI 응답 비어있음. 다시 시도해주세요.';
+          await message.channel.send(`**${label}** (embed 송신 실패: ${sendErr.message})\n${fallbackText}`);
+        } catch (fbErr) {
+          console.error(`[Thread followup] fallback send 도 실패:`, fbErr);
+        }
+      }
 
       // CEO 스레드에서 큐 시작 승인 감지
       // pending 아이템이 있을 때만 호출. 없으면 사일런트 대신 경고 reply로 가시화.
@@ -587,7 +619,22 @@ client.on('messageCreate', async (message) => {
     if (r) await r.remove().catch(() => {});
     await message.react('✅');
 
-    await thread.send({ embeds: [buildResultEmbed(agentRole, label, buffer, timedOut)] });
+    // PR-BOT-SILENT-FAIL-FIX: 에이전트 채널 단일 실행 — embed 사일런트 fail 가드
+    try {
+      console.log(`[Agent ${channelName}] embed 송신 시작 (bufferLen=${buffer.length})`);
+      await thread.send({ embeds: [buildResultEmbed(agentRole, label, buffer, timedOut)] });
+      console.log(`[Agent ${channelName}] embed 송신 성공`);
+    } catch (sendErr) {
+      console.error(`[Agent ${channelName}] embed 송신 실패:`, sendErr);
+      try {
+        const fallbackText = buffer && buffer.trim()
+          ? buffer.trim().slice(-1800)
+          : '⚠️ Claude CLI 응답 비어있음. 다시 시도해주세요.';
+        await thread.send(`**${label}** (embed 송신 실패: ${sendErr.message})\n${fallbackText}`);
+      } catch (fbErr) {
+        console.error(`[Agent ${channelName}] fallback send 도 실패:`, fbErr);
+      }
+    }
   } catch (err) {
     console.error(`[Bot] ${channelName} 오류:`, err);
     await message.reply(`❌ 오류: ${err.message}`);
