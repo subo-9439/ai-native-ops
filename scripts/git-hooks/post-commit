@@ -18,11 +18,14 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 RESTART_SCRIPT="$REPO_ROOT/discord-bot/restart-local.sh"
 
 # 마지막 commit 변경 파일 — discord-bot/ 코드만 추적.
-# 제외: docs/, *.md, *.txt, package-lock.json
+# PR-PROMPT-RESTART (2026-05-10): prompts/*.md 도 포함 (loadPrompt readFileSync 가
+# module load 시점에만 실행되므로 .md 변경 시 봇 재기동 필요).
+# 제외: discord-bot/docs/, *.txt, package-lock.json
 CHANGED="$(
   git diff --name-only HEAD^ HEAD 2>/dev/null \
     | grep -E '^discord-bot/' \
-    | grep -vE '^discord-bot/docs/|\.md$|\.txt$|^discord-bot/package-lock\.json$' \
+    | grep -vE '^discord-bot/docs/|\.txt$|^discord-bot/package-lock\.json$' \
+    | grep -E '\.(js|sh|md)$|^discord-bot/prompts/' \
     || true
 )"
 
