@@ -71,6 +71,44 @@ Flutter 코드(game_project_app/, game_project_web/)를 수정할 때 반드시 
 - "수정할까요?"라고 묻지 말고 바로 수정한다.
 - 작업 완료 후 변경 내용을 요약한다.
 
+[테스트 자가 추천 규칙 — Standing Rule (PR-PROMPT-TEST-AUTO)]
+
+사용자가 "테스트해", "검증해", "동작 확인", "회귀 점검" 같은 짧은 명령 받으면 **어디서/무엇을/어떻게** 묻지 말고 다음 매트릭스로 자가 결정 후 즉시 실행:
+
+**1. 무엇을 — 직전 PR/커밋/변경 파일 경로로 추론**:
+- `lib/features/game/<game>/` → 해당 게임 widget test + golden + integration test
+- `lib/features/room/` → lobby/join/sub_room 위젯 테스트 + golden
+- `lib/core/theme/` → 모든 게임 토큰 사용처 회귀 (5 게임 + 사다리 painter)
+- `lib/features/landing/` → landing golden 4 케이스 (mobile/CTA/web wide/extra wide)
+- BE (`game_project_server/`) → `./gradlew compileJava` + `--tests *integration*` + 해당 도메인 unit test
+- bot/scripts/hooks → `bash -n` syntax + 스모크 (헬스 / log error grep)
+- `_router.json` / agent-config / prompts/*.md → `node --check` + dry-run + 봇 재기동 헬스
+
+**2. 어디서 — 폼팩터/환경 자동 결정**:
+- UI 변경 → mobile (375×812) + web wide (1280×800) **양쪽 필수** (responsive-gate)
+- BE 변경 → testcontainers (MariaDB + Redis + RabbitMQ) integration test
+- 봇 변경 → 로컬 봇 재기동 + 헬스 200 + 로그 errors=0
+- Web/SW 변경 → curl 헬스 + index.html cleanup script v4 동작
+
+**3. 어떻게 — 검증 단계 (순서 고정)**:
+1. `flutter analyze <변경 파일/디렉토리>` → No issues
+2. `flutter test <관련 디렉토리>` → 모두 PASS + 신규 테스트 추가 권장
+3. golden 회귀 시 `--update-goldens` 후 변경 사유 commit msg 명시
+4. BE: `./gradlew compileJava` + `./gradlew test --tests *<관련>*`
+5. 봇: `restart-local.sh` + `/health` 200 + 최근 로그 errors=0
+
+**4. 통과 기준 (DoD)**:
+- `flutter analyze` baseline 유지 (신규 issue 0)
+- `flutter test` 전체 PASS, 회귀 0
+- golden mismatch 시 시각 검증 후 update / 시각 회귀면 fix
+- 5종 검증 표현 (고도화/반응형/에셋/연계/의도) 모두 명시
+
+**5. 모호한 경우**:
+- 사용자가 "테스트해" 만 보내고 직전 PR 없으면 → `flutter test` 전체 + `flutter analyze` 전체 + 최근 5 commit 영향 추론
+- 사용자가 명시 (예: "ladder 테스트해") → 해당 디렉토리만
+
+→ **재질문 금지**. 매트릭스 따라 즉시 실행 + 결과 보고. 사용자가 추가 범위 원하면 그 후 확장.
+
 [명세를 받았을 때 — 의도 추론 의무 (PR-ROLE1)]
 
 CEO/사용자/디스패치 명세를 받았을 때, 단순 implementation 하지 말고 다음 4가지를 답변에 포함한다:
