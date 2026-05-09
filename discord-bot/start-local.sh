@@ -44,6 +44,30 @@ if [ -z "$EXISTING_PID" ]; then
   # 포트로 재탐색 (가장 확실한 방법 — 포트 점유자 = 봇 본체)
   EXISTING_PID="$(lsof -iTCP:${BOT_HTTP_PORT} -sTCP:LISTEN -t 2>/dev/null || true)"
 fi
+
+# 좀비 보강 (2026-05-10 PR-BOT-ZOMBIE-FIX): 4040 LISTEN 안 하는 좀비 instance 도 정리.
+# 이전 사고: PID 39316/39318 이 6일+ 동안 살아있어 Discord 토큰 conflict 야기 →
+# 봇이 메시지 수신만 하고 응답 무. start-local.sh 가 LISTEN port 만 잡아서 미감지.
+# 해결: 모든 `node index.js` 프로세스 중 cwd=$SCRIPT_DIR 인 것 추가 합산.
+ZOMBIE_PIDS=""
+for p in $(LC_ALL=C pgrep -f "node.*index\.js" 2>/dev/null || true); do
+  case " $EXISTING_PID " in *" $p "*) continue ;; esac
+  cwd=""
+  if command -v lsof >/dev/null 2>&1; then
+    cwd="$(lsof -p $p 2>/dev/null | awk '$4=="cwd"{print $NF; exit}')"
+  fi
+  if [ -z "$cwd" ] && [ -e "/proc/$p/cwd" ]; then
+    cwd="$(readlink /proc/$p/cwd 2>/dev/null || true)"
+  fi
+  if [ "$cwd" = "$SCRIPT_DIR" ]; then
+    ZOMBIE_PIDS="$ZOMBIE_PIDS $p"
+  fi
+done
+if [ -n "$ZOMBIE_PIDS" ]; then
+  echo "[Bot] 좀비 instance 감지 (cwd=$SCRIPT_DIR):$ZOMBIE_PIDS"
+  EXISTING_PID="$EXISTING_PID$ZOMBIE_PIDS"
+fi
+
 if [ -n "$EXISTING_PID" ]; then
   echo "[Bot] 기존 PID $EXISTING_PID 종료 (SIGTERM)"
   kill -TERM $EXISTING_PID 2>/dev/null || true
