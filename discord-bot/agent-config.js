@@ -17,6 +17,8 @@ const AGENT_CONFIG = {
   'frontend-dev': { label: '🎨 FE (디스패치)',  color: 0x57F287, syncAgent: 'fe'  },
   'ai-dev':       { label: '🤖 AI (디스패치)',  color: 0xEB459E, syncAgent: 'ai'  },
   'ceo':          { label: '👔 CEO 기획실',     color: 0xFFD700, syncAgent: 'ceo' },
+  // PR-AGENT-OPS-IMPL1 — Codex 외부 검수자
+  'codex':        { label: '🔍 Codex 검수',     color: 0x10A37F, syncAgent: 'codex' },
   '잡담':         { label: '💬 잡담',           color: 0xED4245, syncAgent: 'dev' },
 };
 
