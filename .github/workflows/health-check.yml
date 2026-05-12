@@ -65,30 +65,60 @@ jobs:
             echo "ok=0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Notify Discord on any failure
+      - name: Notify Discord ops-errors (api/admin failure)
+        # PR-CHANNEL-SPLIT — api.nolza.org / admin.nolza.org = 운영 인프라 (Spring BE / gateway)
+        # → ops-errors 채널. webhook 부재 시 ALERTS 로 backward compat fallback.
         if: |
           steps.api.outputs.ok != '1' ||
-          steps.admin.outputs.ok != '1' ||
-          steps.web.outputs.ok != '1'
+          steps.admin.outputs.ok != '1'
         env:
-          WEBHOOK: ${{ secrets.DISCORD_ALERTS_WEBHOOK }}
+          OPS_WEBHOOK: ${{ secrets.DISCORD_OPS_ERRORS_WEBHOOK }}
+          ALERTS_WEBHOOK: ${{ secrets.DISCORD_ALERTS_WEBHOOK }}
         run: |
+          WEBHOOK="${OPS_WEBHOOK:-$ALERTS_WEBHOOK}"
           if [ -z "$WEBHOOK" ]; then
-            echo "::warning::DISCORD_ALERTS_WEBHOOK secret 미설정 — 알림 skip"
+            echo "::warning::DISCORD_OPS_ERRORS_WEBHOOK / DISCORD_ALERTS_WEBHOOK 둘 다 미설정 — 알림 skip"
             exit 0
           fi
           API_CODE="${{ steps.api.outputs.code }}"
           ADMIN_CODE="${{ steps.admin.outputs.code }}"
-          WEB_CODE="${{ steps.web.outputs.code }}"
 
-          # 노트북 슬립이 가장 흔한 원인이므로 안내 문구 포함.
-          DESC="api.nolza.org: ${API_CODE}\nadmin.nolza.org: ${ADMIN_CODE}\nnolza.org: ${WEB_CODE}\n\n흔한 원인:\n- 맥북 슬립 (caffeinate 미동작)\n- docker app 컨테이너 다운\n- 게이트웨이 nginx 재시작 필요"
+          DESC="api.nolza.org: ${API_CODE}\nadmin.nolza.org: ${ADMIN_CODE}\n\n흔한 원인:\n- 맥북 슬립 (caffeinate 미동작)\n- docker app 컨테이너 다운\n- 게이트웨이 nginx 재시작 필요"
 
           PAYLOAD=$(jq -n \
             --arg desc "$DESC" \
             --arg ts "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
             '{embeds: [{
-              title: "🔴 외부 헬스체크 실패",
+              title: "🔴 운영 인프라 헬스체크 실패",
+              description: $desc,
+              color: 15158332,
+              footer: {text: $ts}
+            }]}')
+
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$WEBHOOK" | head -c 200 || true
+
+      - name: Notify Discord game-errors (frontend failure)
+        # PR-CHANNEL-SPLIT — nolza.org (Flutter web frontend) = 게임 영역 → game-errors 채널.
+        # webhook 부재 시 ALERTS 로 backward compat fallback.
+        if: steps.web.outputs.ok != '1'
+        env:
+          GAME_WEBHOOK: ${{ secrets.DISCORD_GAME_ERRORS_WEBHOOK }}
+          ALERTS_WEBHOOK: ${{ secrets.DISCORD_ALERTS_WEBHOOK }}
+        run: |
+          WEBHOOK="${GAME_WEBHOOK:-$ALERTS_WEBHOOK}"
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_GAME_ERRORS_WEBHOOK / DISCORD_ALERTS_WEBHOOK 둘 다 미설정 — 알림 skip"
+            exit 0
+          fi
+          WEB_CODE="${{ steps.web.outputs.code }}"
+          DESC="nolza.org: ${WEB_CODE}\n\n흔한 원인:\n- Cloudflare 캐시 오염\n- nginx static asset 손상\n- Flutter web 빌드 SW 사고"
+
+          PAYLOAD=$(jq -n \
+            --arg desc "$DESC" \
+            --arg ts "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+            '{embeds: [{
+              title: "🔴 게임 frontend 헬스체크 실패",
               description: $desc,
               color: 15158332,
               footer: {text: $ts}
