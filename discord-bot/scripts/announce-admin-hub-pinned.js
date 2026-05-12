@@ -32,6 +32,7 @@ const BOT_TOKEN = process.env.DISCORD_TOKEN || '';
 const CHANNEL_ID = process.env.DISCORD_NOTICE_CHANNEL_ID || '';
 const PROD_BASE = process.env.PROD_BASE || 'https://nolza.org';
 const LOCAL_BASE = process.env.LOCAL_BASE || 'http://localhost:5000';
+const REPO_BASE = process.env.REPO_BASE || 'https://github.com/kws3363/whosbuying';
 
 if (!BOT_TOKEN) {
   console.error('[announce-admin-hub-pinned] FAIL — DISCORD_TOKEN 환경변수 미설정');
@@ -52,47 +53,81 @@ const ADMIN_HUB_MARKER = '🛠️ 누가살래 Admin Hub';
 
 function buildEmbed() {
   return new EmbedBuilder()
-    .setTitle('🛠️ 누가살래 Admin Hub — 통합 진입점 + 카테고리')
+    .setTitle('🛠️ 누가살래 Admin Hub — 모든 페이지 직접 링크')
     .setURL(`${PROD_BASE}/#/admin`)
     .setColor(0x10A37F)
     .setDescription(
-      `**Admin 페이지가 하나로 통합됐어요** (PR-ADMIN-UNIFIED). 좌측 NavigationRail / 하단 BottomNavBar 로 5 카테고리 전환.\n\n` +
-      `**🔗 Admin 통합 진입점**\n` +
+      `**Admin 5 카테고리 모두 직접 URL 진입 가능** (PR-ADMIN-DEEPLINK). 첫 진입 시 ADMIN_API_KEY 입력 (로컬: \`application-local.yml\` L40 / prod: 배포 환경변수).\n\n` +
+      `**🔗 통합 진입점**\n` +
       `• prod: ${PROD_BASE}/#/admin\n` +
-      `• 로컬: ${LOCAL_BASE}/#/admin\n\n` +
-      `첫 진입 시 ADMIN_API_KEY 입력 (로컬: \`application-local.yml\` L40 / prod: 배포 환경변수).`
+      `• 로컬: ${LOCAL_BASE}/#/admin`
     )
     .addFields(
       {
         name: '📊 운영 모니터링 (ops)',
-        value: `recent-errors / recent-slow / summary (실시간 ring-buffer)\nBE: \`${PROD_BASE}/api/v1/admin/ops\` (Bearer)`,
+        value:
+          `실시간 ring-buffer (recent-errors / recent-slow / summary)\n` +
+          `• prod: ${PROD_BASE}/#/admin/ops\n` +
+          `• 로컬: ${LOCAL_BASE}/#/admin/ops\n` +
+          `• BE: \`${PROD_BASE}/api/v1/admin/ops\` (Bearer)`,
       },
       {
         name: '📖 시스템 문서 (docs)',
-        value: 'Admin 전용 wiki — markdown viewer + 좌측 목록',
+        value:
+          `Admin 전용 wiki — markdown viewer\n` +
+          `• prod: ${PROD_BASE}/#/admin/docs\n` +
+          `• 로컬: ${LOCAL_BASE}/#/admin/docs`,
       },
       {
-        name: '🗺️ 서비스 흐름 (services-flow)',
-        value: 'Discord + 누가살래 노드 다이어그램 + 시나리오 흐름 + 5 노드 상세\n→ 좌측 목록의 `services-flow-overview` 클릭',
+        name: '🗺️ 서비스 흐름 — 노드 다이어그램 페이지',
+        value:
+          `Discord + 누가살래 전체 시스템을 **노드 형태로 보는 페이지**. 시나리오 흐름 + 5 노드 상세\n` +
+          `• prod: ${PROD_BASE}/#/admin/flow\n` +
+          `• 로컬: ${LOCAL_BASE}/#/admin/flow\n\n` +
+          `**5 노드 상세 (overview 안에서 클릭):**\n` +
+          `• \`services-flow-overview\` — 전체 다이어그램 + 시나리오 2종\n` +
+          `• \`services/whosbuying-frontend\` — Flutter Web 노드\n` +
+          `• \`services/whosbuying-backend\` — Spring Boot 노드\n` +
+          `• \`services/whosbuying-data-layer\` — MariaDB / Redis / RabbitMQ\n` +
+          `• \`services/discord-bot\` — Discord 봇 노드\n` +
+          `• \`services/admin-tools\` — Admin 도구 노드`,
       },
       {
         name: '🔍 Codex 검수 리뷰',
-        value: '매 commit 의 Codex 자동 검수 결과 (한국어, 5항목 평가)\n→ `docs/codex-review/<sha>.md` 영구 기록',
+        value:
+          `매 commit Codex 자동 검수 결과 (한국어, 5항목 평가)\n` +
+          `• Admin UI: ${PROD_BASE}/#/admin/codex\n` +
+          `• 영구 기록: ${REPO_BASE}/tree/main/docs/codex-review (sha 단위)`,
       },
       {
         name: '🚨 Kill Switch',
-        value: `긴급 서비스 중단 토글 (Redis 기반)\nBE: \`${PROD_BASE}/api/v1/admin/kill-switch\` GET/POST`,
+        value:
+          `긴급 서비스 중단 토글 (Redis 기반)\n` +
+          `• prod: ${PROD_BASE}/#/admin/kill\n` +
+          `• 로컬: ${LOCAL_BASE}/#/admin/kill\n` +
+          `• BE: \`${PROD_BASE}/api/v1/admin/kill-switch\` GET/POST`,
       },
       {
         name: '⚙️ 부속 인프라 (BASIC AUTH 별도)',
         value:
-          `• Actuator: \`${PROD_BASE}/actuator/health\` (admin / ACTUATOR_PASSWORD)\n` +
+          `• Actuator (헬스/메트릭): \`${PROD_BASE}/actuator/health\` (admin / ACTUATOR_PASSWORD)\n` +
+          `• Swagger UI: \`http://localhost:8080/swagger-ui.html\`\n` +
           `• Grafana: \`http://localhost:3001\` (admin/admin)\n` +
           `• Prometheus: \`http://localhost:9090\`\n` +
-          `• RabbitMQ Mgmt: \`http://localhost:15672\` (guest/guest)`,
+          `• RabbitMQ 관리: \`http://localhost:15672\` (guest/guest)`,
+      },
+      {
+        name: '🤖 자동 복구 시스템 (L1/L2/L3)',
+        value:
+          `PR-OPS-AUTO-RECOVERY-FULL (2026-05-12) — 영구 사고 자동 진단/복구\n` +
+          `• L1 launchd: 봇 crash 시 10초 후 자동 재시작\n` +
+          `• L2 Codex: 5분 cron, 15분 연속 다운 시 자동 진단 → \`#ops-errors\` / \`#game-errors\` 알림\n` +
+          `• L3 Claude: Codex 진단 후 자동 fix PR (sub-agent 위임)\n` +
+          `• 무한루프 차단: 같은 패턴 3회 반복 시 stop\n` +
+          `• 정책 SSOT: \`.claude/rules/harness/auto-recovery-gate.md\``,
       }
     )
-    .setFooter({ text: `PR-AGENT-OPS-IMPL3 partial · 자동 핀 등록 (Discord API .pin())` });
+    .setFooter({ text: `PR-ADMIN-DEEPLINK · 자동 핀 등록 (Discord API .pin())` });
 }
 
 client.once('ready', async () => {
