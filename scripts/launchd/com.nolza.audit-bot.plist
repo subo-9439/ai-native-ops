@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nolza.audit-bot</string>
+
+  <!--
+    PR-OPS-AUTO-RECOVERY-L2 — Discord 봇 5분 주기 헬스 감사.
+    영구 사고 (15분 연속 다운) 감지 시 Codex 자동 진단 → ops-errors Discord 채널 알림.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kimsubo/Desktop/game-project/whosbuying/scripts/audit-bot-health.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kimsubo/Desktop/game-project/whosbuying</string>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/audit-bot-health.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/audit-bot-health.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/kimsubo/.nvm/versions/node/v20.20.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/kimsubo</string>
+  </dict>
+</dict>
+</plist>

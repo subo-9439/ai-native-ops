@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nolza.audit-game</string>
+
+  <!--
+    PR-OPS-AUTO-RECOVERY-L2 — 게임 서비스 5분 주기 헬스 감사.
+    api.nolza.org actuator + nolza.org + client-error.log 임계 점검.
+    사고 시 Codex 자동 진단 → game-errors Discord 채널 알림.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kimsubo/Desktop/game-project/whosbuying/scripts/audit-game-health.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kimsubo/Desktop/game-project/whosbuying</string>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/audit-game-health.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/audit-game-health.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/kimsubo/.nvm/versions/node/v20.20.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/kimsubo</string>
+  </dict>
+</dict>
+</plist>
