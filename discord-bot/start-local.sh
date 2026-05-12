@@ -82,5 +82,22 @@ if [ -n "$EXISTING_PID" ]; then
   fi
 fi
 
-echo "[Bot] 새 인스턴스 기동"
+# [2026-05-12 fix] nvm default (v20+) 강제 활성.
+# 봇 코드 (index.js L98) 가 optional chaining (?.) 사용 — node v12 에서 SyntaxError.
+# PATH 우선순위로 nvm v12.14.1 이 default 선택되는 환경에서 봇 시작 실패하던 사고 fix.
+# 사용자 보고 (2026-05-12 새벽): "디스코드봇도 동작안하고 문제가많은데"
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh"
+  nvm use default >/dev/null 2>&1 || nvm use v20.20.2 >/dev/null 2>&1 || true
+fi
+
+# node 버전 검증 — v14+ 미만이면 abort (optional chaining / nullish coalescing 등 필요)
+NODE_MAJOR=$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 14 ]; then
+  echo "[Bot] [FATAL] node v$NODE_MAJOR 감지 — v14+ 필요 (optional chaining 등). nvm default 확인." >&2
+  exit 1
+fi
+
+echo "[Bot] node $(node --version) — 새 인스턴스 기동"
 exec node index.js
