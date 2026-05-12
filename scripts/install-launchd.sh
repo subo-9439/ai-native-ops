@@ -1,14 +1,16 @@
 #!/bin/bash
-# PR-OPS-AWAKE1 — launchd 자동 시작 설치.
+# PR-OPS-AWAKE1 + PR-OPS-AUTO-RECOVERY-L1 — launchd 자동 시작 / 자동 복구 설치.
 #
 # 무엇을 셋업하나:
-#   1. com.nolza.caffeinate — 시스템 슬립 영구 차단 (FDA 무관, 항상 동작 가능)
-#   2. com.nolza.ops        — bot/gateway/wiki 자동 시작 (선택, FDA 부여 시만 동작)
+#   1. com.nolza.caffeinate  — 시스템 슬립 영구 차단 (FDA 무관, 항상 동작 가능)
+#   2. com.nolza.ops         — bot/gateway/wiki 자동 시작 (선택, FDA 부여 시만 동작)
+#   3. com.nolza.discord-bot — Discord 봇 단독 자동 재가동 (L1, FDA 무관)
 #
 # 사용:
-#   bash scripts/install-launchd.sh                    # 둘 다 설치
+#   bash scripts/install-launchd.sh                    # 모두 설치
 #   bash scripts/install-launchd.sh caffeinate         # caffeinate 만
 #   bash scripts/install-launchd.sh ops                # ops 만
+#   bash scripts/install-launchd.sh discord-bot        # discord-bot 만 (권장)
 #
 # 사전 조건 (ops.plist 만 해당):
 #   macOS 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한 → /bin/bash 추가
@@ -17,6 +19,7 @@
 # 해제:
 #   launchctl unload ~/Library/LaunchAgents/com.nolza.caffeinate.plist
 #   launchctl unload ~/Library/LaunchAgents/com.nolza.ops.plist
+#   launchctl unload ~/Library/LaunchAgents/com.nolza.discord-bot.plist
 
 set -e
 
@@ -68,8 +71,28 @@ case "$TARGET" in
   ops)
     install_plist "com.nolza.ops"
     ;;
+  discord-bot)
+    install_plist "com.nolza.discord-bot"
+    ;;
+  audit-bot)
+    install_plist "com.nolza.audit-bot"
+    ;;
+  audit-game)
+    install_plist "com.nolza.audit-game"
+    ;;
+  audit)
+    install_plist "com.nolza.audit-bot"
+    install_plist "com.nolza.audit-game"
+    ;;
   all|"")
     install_plist "com.nolza.caffeinate"
+    install_plist "com.nolza.discord-bot" || {
+      echo ""
+      echo "[install-launchd] ⚠️ com.nolza.discord-bot 로드 실패"
+      echo "[install-launchd]    /tmp/discord-bot.err.log 확인"
+    }
+    install_plist "com.nolza.audit-bot" || true
+    install_plist "com.nolza.audit-game" || true
     install_plist "com.nolza.ops" || {
       echo ""
       echo "[install-launchd] ⚠️ com.nolza.ops 로드 실패 (FDA 미부여 가능성)"
@@ -77,7 +100,7 @@ case "$TARGET" in
     }
     ;;
   *)
-    echo "사용법: $0 [caffeinate|ops|all]" >&2
+    echo "사용법: $0 [caffeinate|ops|discord-bot|audit-bot|audit-game|audit|all]" >&2
     exit 2
     ;;
 esac

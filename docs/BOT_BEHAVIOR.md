@@ -286,3 +286,51 @@ bash discord-bot/restart-local.sh
 ON. 워크플로 실패 메일도 함께 옴.
 
 휴대폰 알림은 Discord 모바일 앱 → `#🚨-alerts` 채널 알림 ON 하면 자동.
+
+## 12. launchd 자동 복구 — L1 (PR-OPS-AUTO-RECOVERY-L1)
+
+### 12.1 배경
+
+`com.nolza.ops` (start.sh 전체) 는 FDA 미부여 시 `~/Desktop` 접근 차단으로 죽는다.
+discord-bot 단독 plist 는 cwd 가 `$SCRIPT_DIR` 진입이라 FDA 무관 (caffeinate 와 동일).
+SyntaxError / 토큰 conflict / OOM 등 봇 단독 사고 시 launchd 가 10초 후 자동 재시작.
+
+### 12.2 동작
+
+`scripts/launchd/com.nolza.discord-bot.plist`:
+- `ProgramArguments`: `bash /Users/kimsubo/Desktop/game-project/project-manager/discord-bot/start-local.sh`
+- `KeepAlive` + `SuccessfulExit=false` + `NetworkState=true`
+- `ThrottleInterval=10` (영구 사고 시 무한 루프 차단 — 10초 간격 throttle)
+- `EnvironmentVariables.PATH` 에 nvm v20.20.2 명시 (start-local.sh 의 nvm 활성과 이중 방어)
+- `/tmp/discord-bot.out.log` / `/tmp/discord-bot.err.log` 로 분기
+
+### 12.3 셋업 (사용자 1회)
+
+```bash
+bash project-manager/scripts/install-launchd.sh discord-bot
+```
+
+`launchctl list | grep com.nolza.discord-bot` 로 로드 확인.
+PID 컬럼이 숫자면 동작, `-` 면 ThrottleInterval 대기 중 (영구 사고 진단 필요).
+
+### 12.4 검증
+
+```bash
+# 봇 일부러 종료 → 10초 후 자동 부활
+lsof -ti :4040 | xargs kill -9
+sleep 15
+curl -s localhost:4040/health
+# {"ok":true,...} 도착하면 L1 동작
+```
+
+### 12.5 L1 한계 (L2/L3 가 보강)
+
+L1 은 **임시 사고 (메모리 충돌 / 외부 의존성 일시 차단)** 만 자동 복구. 영구 사고
+(코드 SyntaxError / 토큰 무효 / DB 다운) 는 ThrottleInterval 무한 루프로 표출되지만
+원인은 진단 안 함. 그래서 L2 (Codex 자동 진단) + L3 (Claude 자동 fix) 가 보강.
+
+### 12.6 해제
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nolza.discord-bot.plist
+```

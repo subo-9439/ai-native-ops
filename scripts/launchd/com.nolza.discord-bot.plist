@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nolza.discord-bot</string>
+
+  <!--
+    PR-OPS-AUTO-RECOVERY-L1 — Discord 봇 자동 재가동 (launchd 직접 호출).
+    com.nolza.ops 는 project-manager/start.sh 전체 (bot + gateway + wiki) 를 띄우지만
+    FDA 가 없으면 ~/Desktop 접근 차단으로 죽는다. discord-bot.plist 는 봇만 단독으로
+    띄워 FDA 무관 (start-local.sh 는 cwd 가 $SCRIPT_DIR 로 알아서 진입).
+
+    KeepAlive:
+      SuccessfulExit=false → exit 0 면 재시작 안 함 (수동 종료 시 안전)
+      NetworkState=true   → 네트워크 가용 시만 재시작
+    ThrottleInterval=10   → 10초 간격 (영구 사고 시 무한 루프 차단)
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kimsubo/Desktop/game-project/project-manager/discord-bot/start-local.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kimsubo/Desktop/game-project/project-manager/discord-bot</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>NetworkState</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/discord-bot.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/discord-bot.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!--
+      nvm default (v20.20.2) PATH 우선. PR-BOT-NODE-VERSION-FIX (2026-05-12)
+      후속 — launchd 직접 호출 시 shell profile 미로드라 nvm 활성 누락 사고
+      차단. start-local.sh 자체에도 nvm 활성 로직 있음 (이중 방어).
+    -->
+    <key>PATH</key>
+    <string>/Users/kimsubo/.nvm/versions/node/v20.20.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/kimsubo</string>
+  </dict>
+</dict>
+</plist>
