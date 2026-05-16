@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nolza.auto-deploy</string>
+
+  <!--
+    PR-DEPLOY-AUTO-PULL — origin/main 새 commit 5분 주기 자동 감지 → pull + 배포.
+    배포 머신 전용 (이 Mac). 어느 환경에서 개발/push 하든 이 Mac 이 자동 반영.
+    git ls-remote 1줄 비교 → 변경 없으면 idle 비용 ≈ 0.
+    같은 sha 배포 3회 실패 시 stop + Discord 알림 (무한루프 차단).
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kimsubo/Desktop/game-project/whosbuying/scripts/auto-deploy-watch.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kimsubo/Desktop/game-project/whosbuying</string>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/auto-deploy.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/auto-deploy.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/kimsubo/.nvm/versions/node/v20.20.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/kimsubo</string>
+  </dict>
+</dict>
+</plist>

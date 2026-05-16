@@ -84,6 +84,19 @@ case "$TARGET" in
     install_plist "com.nolza.audit-bot"
     install_plist "com.nolza.audit-game"
     ;;
+  auto-deploy)
+    install_plist "com.nolza.auto-deploy"
+    ;;
+  auto-deploy-off)
+    DST="$DST_DIR/com.nolza.auto-deploy.plist"
+    if [ -f "$DST" ]; then
+      launchctl unload "$DST" 2>/dev/null || true
+      echo "[install-launchd] ✅ com.nolza.auto-deploy unload 완료 (자동 배포 중지)"
+    else
+      echo "[install-launchd] com.nolza.auto-deploy 미설치 — skip"
+    fi
+    exit 0
+    ;;
   all|"")
     install_plist "com.nolza.caffeinate"
     install_plist "com.nolza.discord-bot" || {
@@ -100,7 +113,7 @@ case "$TARGET" in
     }
     ;;
   *)
-    echo "사용법: $0 [caffeinate|ops|discord-bot|audit-bot|audit-game|audit|all]" >&2
+    echo "사용법: $0 [caffeinate|ops|discord-bot|audit-bot|audit-game|audit|auto-deploy|auto-deploy-off|all]" >&2
     exit 2
     ;;
 esac
