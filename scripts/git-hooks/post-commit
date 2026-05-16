@@ -10,6 +10,18 @@
 
 set -e
 
+# === 자동 원격 push (PR-AUTO-PUSH 2026-05-17) ===
+# 사용자 지시: "운영봇+whosbuying 작업 일어나면 항상 깃헙 원격 push 강제.
+# 작업환경이 많아져서 강제로 처리해야함." 배포는 별개 (지시 시에만).
+# 백그라운드 + 실패 무시 (commit 흐름 절대 차단 X). main 브랜치만.
+if [ "${SKIP_AUTO_PUSH:-0}" != "1" ]; then
+  AP_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  if [ "$AP_BRANCH" = "main" ]; then
+    ( nohup git push origin main > /tmp/auto-push-pm-$(date +%s).log 2>&1 & ) || true
+    disown 2>/dev/null || true
+  fi
+fi
+
 if [ "${SKIP_BOT_RESTART:-0}" = "1" ]; then
   exit 0
 fi
