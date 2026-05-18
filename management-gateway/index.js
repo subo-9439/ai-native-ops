@@ -38,6 +38,13 @@ const SSO_SHARED_SECRET = process.env.GATEWAY_SSO_SECRET || '';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12시간
 const SSO_TTL_MS     = 5  * 60 * 1000;      // 5분
+// PR-ADMIN-AUTH-SSO: 게임 서버(nolza.org:8080)가 독립 검증 가능한 HMAC 토큰 TTL.
+// 게이트웨이 세션과 동일 12h. cross-origin 이라 쿠키 대신 redirect 파라미터로 전달.
+const GAME_SSO_TTL_MS = SESSION_TTL_MS;
+// 복귀 redirect 허용 호스트 (open-redirect 방지). 기본 nolza.org.
+const GAME_RETURN_ALLOW = (process.env.GAME_SSO_RETURN_ALLOW
+  || 'https://nolza.org,https://www.nolza.org,http://localhost')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 // ─── 메모리 세션/SSO 저장소 ──────────────────────────────
 const sessions = new Map();  // sessionId → { username, createdAt }
@@ -92,6 +99,38 @@ function getSession(sessionId) {
     return null;
   }
   return s;
+}
+
+// ─── 게임 서버용 HMAC SSO 토큰 (PR-ADMIN-AUTH-SSO) ──────────
+// nolza.org:8080 의 admin API 가 GATEWAY_SSO_SECRET 으로 독립 검증한다.
+// 형식: base64url(payload).base64url(HMAC-SHA256(payload, secret))
+//   payload = {"sub": <username>, "exp": <epoch_ms>}
+// secret 미설정 시(local/dev) 발급은 하되, 게임 서버가 검증을 skip → 기존 Bearer fallback.
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function issueGameSsoToken(username) {
+  const payloadJson = JSON.stringify({
+    sub: username || 'admin',
+    exp: Date.now() + GAME_SSO_TTL_MS,
+  });
+  const payload = b64url(payloadJson);
+  const sig = b64url(
+    crypto.createHmac('sha256', SSO_SHARED_SECRET || 'local-dev-no-secret')
+      .update(payload).digest()
+  );
+  return `${payload}.${sig}`;
+}
+
+function isAllowedReturn(url) {
+  if (!url) return false;
+  try {
+    return GAME_RETURN_ALLOW.some(prefix => url.startsWith(prefix));
+  } catch {
+    return false;
+  }
 }
 
 // 주기적 정리
@@ -199,6 +238,43 @@ app.get('/admin/logout', (req, res) => {
   if (req.cookies?.admin_session) sessions.delete(req.cookies.admin_session);
   res.clearCookie('admin_session');
   res.redirect('/admin/login');
+});
+
+// ─── 게임 서버 SSO 발급 (PR-ADMIN-AUTH-SSO) ───────────────
+// nolza.org/#/admin 에서 "admin.nolza.org 로그인" 클릭 시 진입.
+// 인증 없으면 로그인 페이지로(로그인 후 next 로 복귀) → 인증되면 HMAC 토큰 발급.
+//   - return 쿼리가 허용 호스트면 그 URL?sso=<token> 으로 302 (자동 복귀)
+//   - 아니면 토큰을 화면에 표시 (수동 복사 fallback)
+app.get('/admin/sso-issue', (req, res) => {
+  const returnUrl = typeof req.query.return === 'string' ? req.query.return : '';
+  const session = getSession(req.cookies?.admin_session);
+  if (!session) {
+    const self = '/admin/sso-issue' + (returnUrl
+      ? `?return=${encodeURIComponent(returnUrl)}` : '');
+    return res.redirect(`/admin/login?next=${encodeURIComponent(self)}`);
+  }
+  const token = issueGameSsoToken(session.username);
+  if (returnUrl && isAllowedReturn(returnUrl)) {
+    const sep = returnUrl.includes('?') ? '&' : '?';
+    return res.redirect(`${returnUrl}${sep}sso=${encodeURIComponent(token)}`);
+  }
+  // 허용 안 된 return (또는 미지정) → 토큰 표시 (수동 복사)
+  res.send(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+<title>관리자 SSO 토큰</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;background:#0d1117;
+color:#e6edf3;display:flex;align-items:center;justify-content:center;
+min-height:100vh;margin:0}.box{background:#161b22;border:1px solid #30363d;
+border-radius:12px;padding:32px;max-width:520px}h1{font-size:18px;margin:0 0 12px}
+.tok{word-break:break-all;background:#0d1117;border:1px solid #30363d;
+border-radius:6px;padding:12px;font-family:monospace;font-size:12px;
+color:#7ee787;user-select:all}.sub{color:#8b949e;font-size:13px;
+margin:12px 0}</style></head><body><div class="box">
+<h1>🔑 관리자 SSO 토큰 발급됨</h1>
+<div class="sub">아래 토큰을 복사해 누가살래 Admin 화면의 SSO 입력칸에 붙여넣으세요.
+유효기간 12시간.</div>
+<div class="tok">${token}</div>
+<div class="sub">자동 복귀를 쓰려면 nolza.org Admin 화면의 "admin.nolza.org 로그인"
+버튼으로 진입하세요.</div></div></body></html>`);
 });
 
 // SSO 토큰 발급 (Discord 봇 전용 — 로컬 호출만)
