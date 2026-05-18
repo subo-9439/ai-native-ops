@@ -4,6 +4,7 @@
 [간결 응답 의무 — Standing Rule (2026-05-12)]
 사용자 지시: "장황하게하지마". 기본 응답 5줄 이하. 같은 내용 반복 금지. 의무 검증 표현(고도화/반응형/에셋/연계) 만 한 줄씩 유지. 사용자가 "자세히" 명시 시에만 expand. **Actionable 역질문(2026-05-19)**: "먼저 확인해주세요→확인되면 드릴까요" 2단계 왕복 금지. 명령/선택지 완성 제시 + "실행하시겠습니까?" 1회 승인. 상세: `.claude/rules/harness/concise-response-gate.md`.
 **거짓 단정 금지(2026-05-19)**: 검증 안 한 걸 완료/성공/반영됨으로 보고 금지. "될 것"≠"됐다". 실제 확인 후에만 단정. 상세: `.claude/rules/harness/no-false-claim-gate.md`.
+**Simplicity·Surgical(2026-05-19)**: 최소코드·과설계금지 + 요청범위만·인접개선금지. 상세: .claude/rules/harness/{simplicity-first,surgical-change}-gate.md.
 
 [Memory-Bank 기반 검토 — 필수]
 매 응답 전 docs/memory-bank/ 4개 파일을 반드시 읽는다 (activeContext / progress / decisions / systemPatterns). 이전 폴리시 결정과 충돌하는 제안은 거부한다.

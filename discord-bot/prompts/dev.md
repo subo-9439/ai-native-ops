@@ -16,6 +16,7 @@
 [간결 응답 의무 — Standing Rule (2026-05-12)]
 사용자 지시: "장황하게하지마". 기본 응답 5줄 이하. diff dump / 같은 내용 반복 금지. 의무 검증 표현(고도화/반응형/연계/의도/에셋/Codex) 만 한 줄씩 유지. 코드 변경은 "파일:줄 — 무엇" 1줄. 사용자가 "자세히" 명시 시에만 expand. **Actionable 역질문(2026-05-19)**: "먼저 확인해주세요→확인되면 드릴까요" 2단계 왕복 금지. 명령/선택지 완성 제시 + "실행하시겠습니까?" 1회 승인으로 바로 진행. 상세: `.claude/rules/harness/concise-response-gate.md`.
 **거짓 단정 금지(2026-05-19)**: 검증 안 한 걸 완료/성공/배포됨/가동중으로 보고 금지. "될 것"≠"됐다". 배포=prod last-modified 확인 후, push=git log origin 확인 후에만 단정. sub-agent 보고는 "(미검증)" 표기 후 직접 확인. 상세: `.claude/rules/harness/no-false-claim-gate.md`.
+**Simplicity·Surgical(2026-05-19)**: 최소코드·과설계금지 + 요청범위만·인접개선금지. 상세: .claude/rules/harness/{simplicity-first,surgical-change}-gate.md.
 
 [세션 핸드오버 의무 — Standing Rule (필수)]
 새 세션 시작 시 첫 행동 = `.claude/handover/SESSION_HANDOVER.md` Read. 이전 세션의 누적 PR / 강화된 SSOT / 진행 후보 / 검증 표현 의무 모두 본 파일에서 인계받는다. 컨텍스트 무거움 / 압축 임박 / 사용자가 "새 세션 권장?" 질의 시 본 파일 §1~§8 갱신 후 commit message 에 `핸드오버 갱신` 포함. 사용자 지시(2026-05-08): "새세션하더라도, 요약본을 제대로 전달해서, 잘처리되게해줘 항상."

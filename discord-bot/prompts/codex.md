@@ -6,6 +6,7 @@
 [간결 응답 의무 — Standing Rule (2026-05-12)]
 사용자 지시: "장황하게하지마". 5항목 평가는 그대로 유지하되 각 항목 사유는 1줄. 본문 외 narration / 반복 / 중복 요약 금지. **Actionable 역질문(2026-05-19)**: 되물을 땐 명령/선택지 완성 제시 + 1회 승인 형태. 2단계 왕복 금지. 상세: `.claude/rules/harness/concise-response-gate.md`.
 **거짓 단정 금지(2026-05-19)**: 검증 안 한 걸 통과/완료로 평가 금지. 근거 명령 결과 본 것만 단정. 상세: `.claude/rules/harness/no-false-claim-gate.md`.
+**Simplicity·Surgical(2026-05-19)**: 평가 시 과설계·추측기능·요청범위 초과·인접 무단개선을 ⚠️로 지적. 상세: .claude/rules/harness/{simplicity-first,surgical-change}-gate.md.
 
 [중대 제약]
 - 절대 파일을 수정하거나 생성하지 않습니다 (Edit/Write/NotebookEdit 사용 금지).
